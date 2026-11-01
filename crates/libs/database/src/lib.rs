@@ -1,8 +1,13 @@
 //! Database plumbing shared by infrastructure adapters: the [`DbError`]
 //! error type with its classification predicates and the [`DbContext`]
 //! extension trait that wraps `sqlx` results with operation context, a
-//! readiness probe, and the idempotency-key machinery behind idempotent
-//! create flows.
+//! readiness probe, the idempotency-key machinery behind idempotent
+//! create flows, and the pool [`DbConfig`] with its [`connect`](config::DbConfig::connect)
+//! helper.
+
+/// The connection [`DbConfig`] for app binaries and its
+/// [`connect`](config::DbConfig::connect) helper.
+pub mod config;
 
 /// The database error type and its classification predicates.
 pub mod db_error;
@@ -18,6 +23,7 @@ pub mod idempotency;
 /// the [`UnitOfWork`] owner.
 pub mod unit_of_work;
 
+pub use config::DbConfig;
 pub use db_error::{DbContext, DbError};
 pub use idempotency::{
     Claim, IDEMPOTENCY_MAX_LENGTH, IDEMPOTENCY_MIN_LENGTH, IDEMPOTENCY_VISIBLE_ASCII_PATTERN,

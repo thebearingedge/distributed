@@ -1,11 +1,13 @@
 //! default-api application binary.
 
-use std::{net::SocketAddr, time::Duration};
+mod config;
 
 use anyhow::Context;
 use axum::{Router, http::StatusCode, routing::get, serve};
+use clap::Parser;
 use tokio::net::TcpListener;
 
+use config::Args;
 use telemetry::provider::init_tracer_provider;
 use web::{
     graceful_shutdown::{Draining, graceful_shutdown},
@@ -14,25 +16,13 @@ use web::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let tracer_provider = init_tracer_provider("default_api");
+    let args = Args::parse();
 
-    let drain_delay = std::env::var("SHUTDOWN_DRAIN_SECONDS")
-        .ok()
-        .map_or(Duration::ZERO, |raw| {
-            if let Ok(secs) = raw.parse::<u64>() {
-                Duration::from_secs(secs)
-            } else {
-                tracing::warn!(raw, "unparsable SHUTDOWN_DRAIN_SECONDS, defaulting to 0");
-                Duration::ZERO
-            }
-        });
+    let tracer_provider = init_tracer_provider("default_api");
 
     let draining = Draining::default();
 
-    let address: SocketAddr = std::env::var("LISTEN_ADDRESS")
-        .unwrap_or_else(|_| "0.0.0.0:3000".to_string())
-        .parse()
-        .context("getting socket address")?;
+    let address = args.api.listen_address;
 
     let listener = TcpListener::bind(&address)
         .await
@@ -44,12 +34,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(|| async { StatusCode::OK }))
         .merge(health::router(
             vec![],
-            Duration::from_secs(2),
+            args.api.readiness_timeout(),
             draining.clone(),
         ));
 
     let shutdown_server = serve(listener, router)
-        .with_graceful_shutdown(graceful_shutdown(draining, drain_delay))
+        .with_graceful_shutdown(graceful_shutdown(draining, args.api.drain_delay()))
         .await;
 
     tracing::info!("server stopped. cleaning up...");

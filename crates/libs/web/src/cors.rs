@@ -22,16 +22,89 @@ pub const TRACESTATE: HeaderName = HeaderName::from_static("tracestate");
 
 const CORS_MAX_AGE: Duration = Duration::from_secs(600);
 
-/// Wraps `router` with a [`CorsLayer`] for the given exact origins, allowed
-/// request methods, and allowed request headers: requests whose `Origin` is
-/// not in `allowed_origins` receive no CORS headers, and the layer never emits
-/// a wildcard `Access-Control-Allow-Origin` or reflects an arbitrary request
-/// origin.
+/// CORS policy for [`with_cors`]: exact origins plus the allowed methods and
+/// headers advertised on preflight responses.
+#[derive(Debug, Clone)]
+pub struct CorsConfig {
+    /// Exact origins allowed to make cross-origin requests; empty means CORS
+    /// is off. Never a wildcard.
+    pub allowed_origins: Vec<HeaderValue>,
+    /// Methods advertised as `Access-Control-Allow-Methods`.
+    pub allowed_methods: Vec<Method>,
+    /// Headers advertised as `Access-Control-Allow-Headers`.
+    pub allowed_headers: Vec<HeaderName>,
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: Vec::new(),
+            allowed_methods: vec![Method::GET, Method::POST, Method::PUT, Method::DELETE],
+            allowed_headers: vec![
+                header::CONTENT_TYPE,
+                IDEMPOTENCY_KEY,
+                TRACEPARENT,
+                TRACESTATE,
+            ],
+        }
+    }
+}
+
+/// Errors from [`parse_allowed_origins`].
+#[derive(Debug, thiserror::Error)]
+pub enum ParseOriginsError {
+    /// An origin ended with a trailing slash.
+    #[error("CORS origin must not end with a slash: {origin}")]
+    TrailingSlash {
+        /// The rejected origin.
+        origin: String,
+    },
+    /// An origin was not a valid header value.
+    #[error("invalid CORS origin: {origin}")]
+    Invalid {
+        /// The rejected origin.
+        origin: String,
+        /// The underlying header-value parse failure.
+        #[source]
+        source: axum::http::header::InvalidHeaderValue,
+    },
+}
+
+/// Parses a comma-separated origins value into exact-origin header values.
+/// Entries are trimmed, empty entries are dropped, and empty input yields an
+/// empty list (CORS off).
 ///
-/// The caller owns the API surface: `allowed_methods` is advertised verbatim
-/// as `Access-Control-Allow-Methods` on preflight responses, and
-/// `allowed_headers` as `Access-Control-Allow-Headers` — no method or header
-/// policy is baked in here.
+/// # Errors
+///
+/// Returns [`ParseOriginsError::TrailingSlash`] when an entry ends with a
+/// slash and [`ParseOriginsError::Invalid`] when an entry is not a valid
+/// header value.
+pub fn parse_allowed_origins(raw: &str) -> Result<Vec<HeaderValue>, ParseOriginsError> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+        .map(|origin| {
+            if origin.ends_with('/') {
+                return Err(ParseOriginsError::TrailingSlash {
+                    origin: origin.to_owned(),
+                });
+            }
+            HeaderValue::from_str(origin).map_err(|source| ParseOriginsError::Invalid {
+                origin: origin.to_owned(),
+                source,
+            })
+        })
+        .collect()
+}
+
+/// Wraps `router` with a [`CorsLayer`] according to `config`: requests whose
+/// `Origin` is not in `config.allowed_origins` receive no CORS headers, and
+/// the layer never emits a wildcard `Access-Control-Allow-Origin` or reflects
+/// an arbitrary request origin.
+///
+/// Method and header policy is not baked in here: defaults live in
+/// [`CorsConfig::default`], and callers construct or override the policy via
+/// struct literal.
 ///
 /// Preflight `OPTIONS` requests are answered directly by the layer without
 /// reaching `router`; responses to actual requests from allowed origins carry
@@ -39,27 +112,22 @@ const CORS_MAX_AGE: Duration = Duration::from_secs(600);
 /// [`Access-Control-Expose-Headers`](https://fetch.spec.whatwg.org/#http-access-control-expose-headers)
 /// (`location` and [`crate::request_id::REQUEST_ID_HEADER`]).
 ///
-/// An empty `allowed_origins` leaves the router unchanged (CORS off), so
+/// Empty `config.allowed_origins` leaves the router unchanged (CORS off), so
 /// callers without configured origins get no CORS layer at all.
 ///
 /// # Panics
 ///
-/// Panics when `allowed_origins` contains a wildcard (`*`) value, via
+/// Panics when `config.allowed_origins` contains a wildcard (`*`) value, via
 /// [`AllowOrigin::list`].
-pub fn with_cors(
-    router: Router,
-    allowed_origins: Vec<HeaderValue>,
-    allowed_methods: impl IntoIterator<Item = Method>,
-    allowed_headers: impl IntoIterator<Item = HeaderName>,
-) -> Router {
-    if allowed_origins.is_empty() {
+pub fn with_cors(router: Router, config: CorsConfig) -> Router {
+    if config.allowed_origins.is_empty() {
         return router;
     }
     router.layer(
         CorsLayer::new()
-            .allow_origin(AllowOrigin::list(allowed_origins))
-            .allow_methods(allowed_methods.into_iter().collect::<Vec<Method>>())
-            .allow_headers(allowed_headers.into_iter().collect::<Vec<HeaderName>>())
+            .allow_origin(AllowOrigin::list(config.allowed_origins))
+            .allow_methods(config.allowed_methods)
+            .allow_headers(config.allowed_headers)
             .expose_headers([header::LOCATION, REQUEST_ID_HEADER])
             .max_age(CORS_MAX_AGE),
     )
@@ -70,25 +138,19 @@ mod tests {
     use axum::{
         Router,
         body::Body,
-        http::{self, HeaderName, HeaderValue, Method, Request, StatusCode, header},
+        http::{self, HeaderValue, Method, Request, StatusCode},
         response::Response,
         routing::get,
     };
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    use super::{IDEMPOTENCY_KEY, TRACEPARENT, TRACESTATE, with_cors};
+    use super::{CorsConfig, parse_allowed_origins, with_cors};
     use crate::request_id::REQUEST_ID_HEADER;
 
     const ALLOWED_ORIGIN: &str = "http://localhost:5173";
     const UNLISTED_ORIGIN: &str = "http://localhost:9999";
     const ALLOWED_METHODS: [Method; 4] = [Method::GET, Method::POST, Method::PUT, Method::DELETE];
-    const ALLOWED_HEADERS: [HeaderName; 4] = [
-        header::CONTENT_TYPE,
-        IDEMPOTENCY_KEY,
-        TRACEPARENT,
-        TRACESTATE,
-    ];
     const ADVERTISED_METHODS: &str = "GET,POST,PUT,DELETE";
     const PREFLIGHT_REQUEST_HEADERS: &str = "content-type, idempotency-key";
 
@@ -101,7 +163,13 @@ mod tests {
     }
 
     fn with_test_cors(router: Router) -> Router {
-        with_cors(router, allowed_origins(), ALLOWED_METHODS, ALLOWED_HEADERS)
+        with_cors(
+            router,
+            CorsConfig {
+                allowed_origins: allowed_origins(),
+                ..CorsConfig::default()
+            },
+        )
     }
 
     fn preflight(origin: &str, request_method: &Method, request_headers: &str) -> Request<Body> {
@@ -147,7 +215,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_origin_list_leaves_the_router_without_cors() {
-        let res = with_cors(router(), vec![], ALLOWED_METHODS, ALLOWED_HEADERS)
+        let res = with_cors(router(), CorsConfig::default())
             .oneshot(preflight(
                 ALLOWED_ORIGIN,
                 &Method::POST,
@@ -277,5 +345,51 @@ mod tests {
         assert!(expose.contains("location"));
         assert!(expose.contains(REQUEST_ID_HEADER.as_str()));
         assert_eq!(body(res).await, b"ok".to_vec());
+    }
+
+    #[test]
+    fn empty_raw_yields_no_origins() {
+        assert_eq!(
+            parse_allowed_origins("").unwrap(),
+            Vec::<HeaderValue>::new()
+        );
+    }
+
+    #[test]
+    fn entries_are_trimmed() {
+        let origins =
+            parse_allowed_origins(" http://localhost:5173 , http://localhost:3000 ").unwrap();
+        assert_eq!(
+            origins,
+            vec![
+                HeaderValue::from_static("http://localhost:5173"),
+                HeaderValue::from_static("http://localhost:3000"),
+            ]
+        );
+    }
+
+    #[test]
+    fn trailing_slash_is_rejected_with_the_origin_named() {
+        let err = parse_allowed_origins("http://localhost:5173/").unwrap_err();
+        assert!(err.to_string().contains("http://localhost:5173"));
+    }
+
+    #[test]
+    fn invalid_header_value_is_rejected() {
+        let err = parse_allowed_origins("http://bad\u{1}origin.com").unwrap_err();
+        assert!(err.to_string().contains("invalid CORS origin"));
+    }
+
+    #[test]
+    fn empty_entries_between_commas_are_dropped() {
+        let origins =
+            parse_allowed_origins("http://localhost:5173,,http://localhost:3000").unwrap();
+        assert_eq!(
+            origins,
+            vec![
+                HeaderValue::from_static("http://localhost:5173"),
+                HeaderValue::from_static("http://localhost:3000"),
+            ]
+        );
     }
 }

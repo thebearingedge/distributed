@@ -9,7 +9,7 @@ mod tests {
     use axum::{
         Router,
         body::Body,
-        http::{self, HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header},
+        http::{self, HeaderMap, HeaderValue, Request, StatusCode, header},
     };
     use serde_json::json;
     use serde_json_assert::assert_json_include;
@@ -18,29 +18,23 @@ mod tests {
 
     use super::common::todos_api;
     use todos_api::{api::create_todos_api, app_state::AppState};
-    use web::cors::{IDEMPOTENCY_KEY, TRACEPARENT, TRACESTATE, with_cors};
+    use web::cors::{CorsConfig, with_cors};
     use web::middleware::with_http_tracing;
     use web::test_support::{get_with_headers, post_json_with_headers};
 
     const ALLOWED_ORIGIN: &str = "http://localhost:5173";
     const UNLISTED_ORIGIN: &str = "http://evil.example";
     const PREFLIGHT_REQUEST_HEADERS: &str = "content-type, idempotency-key";
-    const ALLOWED_METHODS: [Method; 4] = [Method::GET, Method::POST, Method::PUT, Method::DELETE];
-    const ALLOWED_HEADERS: [HeaderName; 4] = [
-        header::CONTENT_TYPE,
-        IDEMPOTENCY_KEY,
-        TRACEPARENT,
-        TRACESTATE,
-    ];
 
     /// Builds the todos API router with the CORS layer outermost, exactly as
     /// `main.rs` composes it.
     fn cors_api(postgres: PgPool, allowed_origins: Vec<HeaderValue>) -> Router {
         with_cors(
             with_http_tracing(create_todos_api(AppState::new(postgres))),
-            allowed_origins,
-            ALLOWED_METHODS,
-            ALLOWED_HEADERS,
+            CorsConfig {
+                allowed_origins,
+                ..CorsConfig::default()
+            },
         )
     }
 
