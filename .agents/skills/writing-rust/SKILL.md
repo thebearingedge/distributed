@@ -67,6 +67,28 @@ Leaks to avoid (found in past reviews):
 - **Magic numbers** in shared plumbing (timeouts, limits): accept them as parameters or name them as constants — no bare literals with no configuration path.
 - **`#[sqlx::test]` migrations**: add `migrator = "<domain>::MIGRATOR"` (plus `fixtures(...)`) only when the test executes SQL against that domain's schema — route handlers that query or write, repository tests, anything touching the tables. Tests that never run SQL — OpenAPI document checks, 404/405 fallback behavior, middleware/request-id plumbing, pool-failure paths — use a plain `#[sqlx::test]` (a fresh, empty database) so migration time isn't paid on every run. When in doubt, trace the route: if the handler's success and failure paths both leave the pool untouched, the schema isn't needed.
 
+## Configuration
+
+- **Layered lib configs**: reusable config structs live in libs (`web::config::ApiConfig`, `database::DbConfig`) and derive `Debug, clap::Parser` — not bare `clap::Args`, which clap 4.6's derive lacks `try_parse_from` on; the `Parser` derive also generates the `Args` impl, so `#[command(flatten)]` still consumes it. Every field pairs `#[arg(long, env = "…", …)]` with a doc comment (`missing_docs`) and a declarative default (`default_value` / `default_value_t`); env names are concept-prefixed (`DB_MIN_CONNECTIONS`, not `MIN_CONNECTIONS`). Typed accessors convert to std types (`Duration`, `Vec<HeaderValue>`) instead of leaking raw fields into wiring.
+- **App composition root**: each app binary has a bin-private `src/config.rs` declared with `mod config;` in `main.rs` — a binary-target module, never exported from the lib target of lib+bin crates. It defines `pub(crate) struct Args` deriving `clap::Parser` and flattens exactly the lib configs the app uses:
+
+  ```rust
+  /// Command-line configuration for the todos API binary.
+  #[derive(Debug, clap::Parser)]
+  pub(crate) struct Args {
+      /// Web/runtime configuration.
+      #[command(flatten)]
+      pub(crate) api: ApiConfig,
+      /// Database configuration.
+      #[command(flatten)]
+      pub(crate) db: DbConfig,
+  }
+  ```
+
+  Unparsable config fails fast via clap; no warn-and-default fallbacks.
+- **`main.rs` is orchestration-only**: parse once at the top (`Args::parse()`), then only wire — no `std::env::var`, no hand-rolled parsing, no consts standing in for tunable knobs, no config-shaped types defined inline.
+- **Composition at the app layer**: the merge point is the app's `Args` because only the app knows which libs it uses; libs must not depend on each other to unify config (no `web → database`), and apps must not advertise flags for database concerns they don't have (`default-api` flattens no database config).
+
 ## Before you finish
 
 Run from the repo root (tooling needs direnv active — see `AGENTS.md`, whose
