@@ -1,9 +1,9 @@
 ---
 name: writing-rust
-description: Writing or modifying Rust code in the clean-rust workspace. Use when creating or editing .rs files, Cargo.toml members, migrations, or tests — covers Clean Architecture layering, error handling patterns, module layout, and the lint/test loop.
+description: Writing or modifying Rust code in the distributed workspace. Use when creating or editing .rs files, Cargo.toml members, migrations, or tests — covers Clean Architecture layering, error handling patterns, module layout, and the lint/test loop.
 ---
 
-# Writing Rust in clean-rust
+# Writing Rust in the distributed workspace
 
 Read `AGENTS.md` at the repo root first — it holds the hard rules (commit policy, branch naming, secrets, dependency policy, scratch locations).
 

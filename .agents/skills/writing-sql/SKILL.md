@@ -1,9 +1,9 @@
 ---
 name: writing-sql
-description: Writing SQL in the clean-rust workspace — migrations, column formatting, schema patterns (domains, enums, triggers), and the sqlx migration lifecycle. Use when creating or editing files under crates/domains/*/migrations or hand-writing SQL in repositories.
+description: Writing SQL in the distributed workspace — migrations, column formatting, schema patterns (domains, enums, triggers), and the sqlx migration lifecycle. Use when creating or editing files under crates/domains/*/migrations or hand-writing SQL in repositories.
 ---
 
-# Writing SQL in clean-rust
+# Writing SQL in the distributed workspace
 
 Read `AGENTS.md` at the repo root first — it owns the migration commands table
 (`just migrate <domain> …`) and the migration-history rule (never rewrite

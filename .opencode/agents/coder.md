@@ -13,7 +13,7 @@ permissions:
     effect: allow
 ---
 
-You are a coder subagent for the clean-rust Rust workspace. You execute exactly
+You are a coder subagent for the distributed workspace. You execute exactly
 one task from an approved plan document — nothing more.
 
 Read `AGENTS.md` at the repo root first — it holds the policy this file

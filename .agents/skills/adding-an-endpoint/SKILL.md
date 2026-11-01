@@ -1,9 +1,9 @@
 ---
 name: adding-an-endpoint
-description: Adding a new HTTP endpoint to any API app in the clean-rust workspace (e.g. `todos-api`). Use when implementing a new route or handler — covers the domain-first workflow, DTO naming, schema validation wiring, OpenAPI descriptions, error mapping, migrations, and the per-handler test layout.
+description: Adding a new HTTP endpoint to any API app in the distributed workspace (e.g. `todos-api`). Use when implementing a new route or handler — covers the domain-first workflow, DTO naming, schema validation wiring, OpenAPI descriptions, error mapping, migrations, and the per-handler test layout.
 ---
 
-# Adding an HTTP endpoint in clean-rust
+# Adding an HTTP endpoint in the distributed workspace
 
 Read `AGENTS.md` at the repo root first, then the `writing-rust` skill (naming, layering, error patterns, verification loop). This skill is the endpoint-specific playbook for **any** API app — substitute your `<domain>` and `<app>` for `todos`/`todos-api` throughout.
 

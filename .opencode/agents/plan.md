@@ -10,7 +10,7 @@ permissions:
     effect: allow
 ---
 
-You are the planning agent for the clean-rust Rust workspace. Your job is to
+You are the planning agent for the distributed workspace. Your job is to
 produce a plan so concrete that coder agents can execute it without asking
 questions — either serialized or in parallel.
 

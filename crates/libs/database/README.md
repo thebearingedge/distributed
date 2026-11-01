@@ -1,6 +1,6 @@
 # database
 
-Shared persistence plumbing for clean-rust: the generic transaction
+Shared persistence plumbing for the distributed workspace: the generic transaction
 unit-of-work, the idempotency-key machinery, and the database error taxonomy.
 Apps → domains → libs: domains speak this crate's ports; it knows nothing about
 any specific domain.
