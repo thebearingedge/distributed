@@ -1,0 +1,17 @@
+[package]
+name = "default-api"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+telemetry.workspace = true
+web.workspace = true
+
+anyhow.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
