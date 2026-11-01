@@ -1,19 +1,23 @@
-# syntax=docker/dockerfile:1
+ARG APPLICATION=todos-api
+
 FROM --platform=$BUILDPLATFORM ghcr.io/thebearingedge/rust-builder:default AS rust-builder
 
 ARG TARGETARCH
+ARG APPLICATION
 
 COPY --chown=65534:65534 . .
 
 RUN \
   T="$(rust-target "$TARGETARCH")" \
-  && cargo build --release --locked --target "$T" -p todos-api \
-  && cp "target/$T/release/todos-api" /app/todos-api
+  && cargo build --release --locked --target "$T" -p "$APPLICATION" \
+  && cp "target/$T/release/$APPLICATION" "/app/$APPLICATION"
 
 
 FROM gcr.io/distroless/cc-debian12
 
-COPY --from=rust-builder /app/todos-api /todos-api
+ARG APPLICATION
+
+COPY --from=rust-builder "/app/$APPLICATION" "/$APPLICATION"
 
 USER 65534:65534
 

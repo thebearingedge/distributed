@@ -526,6 +526,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "default-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "telemetry",
+ "tokio",
+ "tracing",
+ "web",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
