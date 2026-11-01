@@ -2,7 +2,7 @@
 
 ## Project
 
-`clean-rust` is a Rust workspace (edition 2024) demonstrating Clean Architecture. Three layers with dependency direction apps → domains → libs:
+`distributed` is a monorepo for distributed systems. Backend code is currently Rust — an edition 2024 workspace organized with Clean Architecture layering; Go and JavaScript may be introduced later. Three layers with dependency direction apps → domains → libs:
 
 - `crates/apps/` — deployables, at `crates/apps/<category>/<app>`: `api/todos-api` (axum HTTP API), `worker/email-worker`, `cli/ops-cli`
 - `crates/domains/` — business logic (e.g. `todos`): use_cases define repository ports, infrastructure implements them (sqlx + sea-query), migrations live in `crates/domains/<domain>/migrations`
