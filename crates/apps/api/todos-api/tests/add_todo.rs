@@ -6,8 +6,8 @@ mod common;
 #[cfg(test)]
 mod tests {
     use axum::{body::Body, http::StatusCode};
-    use chrono::DateTime;
     use claims::assert_ok;
+    use jiff::Timestamp;
     use serde_json::json;
     use serde_json_assert::assert_json_include;
     use sqlx::PgPool;
@@ -109,7 +109,7 @@ mod tests {
             .as_str()
             .expect("updatedAt should be a string");
 
-        assert_ok!(DateTime::parse_from_rfc3339(updated_at));
+        assert_ok!(updated_at.parse::<Timestamp>());
         assert_json_include!(actual: parts.body, expected: json!({
             "task": "write some rust!",
             "completedAt": null

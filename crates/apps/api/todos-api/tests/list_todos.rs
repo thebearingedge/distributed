@@ -6,7 +6,7 @@ mod common;
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
-    use chrono::{DateTime, Utc};
+    use jiff::Timestamp;
     use serde_json::{Value, json};
     use serde_json_assert::assert_json_include;
     use sqlx::PgPool;
@@ -177,7 +177,7 @@ mod tests {
             .items
             .iter()
             .map(|todo| todo.updated_at)
-            .collect::<Vec<DateTime<Utc>>>();
+            .collect::<Vec<Timestamp>>();
 
         assert!(updated_dates.is_sorted());
     }

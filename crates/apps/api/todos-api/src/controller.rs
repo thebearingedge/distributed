@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -53,9 +53,9 @@ pub struct TodoHttp {
     /// The task text.
     pub task: String,
     /// When the todo was last created or updated.
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     /// When the todo was completed, or `null` while it is still open.
-    pub completed_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<Timestamp>,
 }
 
 impl From<TodoModel> for TodoHttp {
@@ -250,7 +250,8 @@ impl TryFrom<ListTodosQuery> for ListParams {
             Some(t) if t.sort != key || t.order != order => return Err(CursorError::SortMismatch),
             Some(t) => Some(TodoCursor {
                 todo_id: t.todo_id,
-                updated_at: DateTime::from_timestamp_micros(t.updated_at_micros)
+                updated_at: Timestamp::from_microsecond(t.updated_at_micros)
+                    .ok()
                     .ok_or(CursorError::Malformed)?,
             }),
             None => None,
@@ -295,7 +296,7 @@ impl TodoPageHttp {
                 sort: sort.key.into(),
                 order: sort.order.into(),
                 todo_id: cursor.todo_id,
-                updated_at_micros: cursor.updated_at.timestamp_micros(),
+                updated_at_micros: cursor.updated_at.as_microsecond(),
             })
         });
         Self {

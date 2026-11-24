@@ -7,8 +7,8 @@ mod common;
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
-    use chrono::DateTime;
     use claims::assert_ok;
+    use jiff::Timestamp;
     use serde_json::json;
     use serde_json_assert::assert_json_include;
     use sqlx::PgPool;
@@ -37,8 +37,8 @@ mod tests {
         let updated_at = data["updatedAt"]
             .as_str()
             .expect("updatedAt should be a string");
-        let updated_at = assert_ok!(DateTime::parse_from_rfc3339(updated_at));
-        let original_updated_at = assert_ok!(DateTime::parse_from_rfc3339("2026-01-05T00:00:00Z"));
+        let updated_at = assert_ok!(updated_at.parse::<Timestamp>());
+        let original_updated_at = assert_ok!("2026-01-05T00:00:00Z".parse::<Timestamp>());
         assert!(
             updated_at > original_updated_at,
             "updatedAt should strictly increase ({original_updated_at} -> {updated_at})"
@@ -47,7 +47,7 @@ mod tests {
         let completed_at = data["completedAt"]
             .as_str()
             .expect("completedAt should be set for a completed todo");
-        assert_ok!(DateTime::parse_from_rfc3339(completed_at));
+        assert_ok!(completed_at.parse::<Timestamp>());
 
         assert_json_include!(actual: parts.body, expected: json!({
             "task": "write more rust!"
@@ -91,9 +91,8 @@ mod tests {
         let completed_at = data["completedAt"]
             .as_str()
             .expect("completedAt should stay set for a completed todo");
-        let completed_at = assert_ok!(DateTime::parse_from_rfc3339(completed_at));
-        let original_completed_at =
-            assert_ok!(DateTime::parse_from_rfc3339("2026-01-06T00:00:00Z"));
+        let completed_at = assert_ok!(completed_at.parse::<Timestamp>());
+        let original_completed_at = assert_ok!("2026-01-06T00:00:00Z".parse::<Timestamp>());
         assert!(
             completed_at > original_completed_at,
             "completedAt should refresh ({original_completed_at} -> {completed_at})"

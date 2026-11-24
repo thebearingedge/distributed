@@ -15,7 +15,7 @@ web = { workspace = true, features = ["test-support"] }
 aide.workspace = true
 anyhow.workspace = true
 axum.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 clap.workspace = true
 jsonschema.workspace = true
 schemars.workspace = true
