@@ -475,8 +475,7 @@ mod tests {
         let content_type = res
             .headers()
             .get(header::CONTENT_TYPE)
-            .map(|v| v.to_str().unwrap().to_owned())
-            .unwrap_or_default();
+            .map_or_default(|v| v.to_str().unwrap().to_owned());
         let body = res.into_body().collect().await.unwrap().to_bytes();
         let data = serde_json::from_slice(&body).unwrap();
         (status, content_type, data)

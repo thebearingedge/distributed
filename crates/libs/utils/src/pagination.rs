@@ -68,7 +68,7 @@ pub struct Page<T, C> {
 impl<T, C> Default for Page<T, C> {
     fn default() -> Self {
         Self {
-            items: Vec::with_capacity(0),
+            items: Vec::new(),
             next: None,
         }
     }

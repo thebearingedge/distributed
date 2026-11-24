@@ -245,13 +245,12 @@ pub async fn delete(router: Router, uri: &str) -> ResponseParts {
     let content_type = response
         .headers()
         .get(header::CONTENT_TYPE)
-        .map(|value| {
+        .map_or_default(|value| {
             value
                 .to_str()
                 .expect("content-type header should be UTF-8")
                 .to_owned()
-        })
-        .unwrap_or_default();
+        });
     let bytes = response
         .into_body()
         .collect()
