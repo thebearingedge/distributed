@@ -1,7 +1,7 @@
 //! Shared axum web plumbing: HTTP error bodies, schema-validated extractors,
-//! health-probe routing, tracing middleware, `OpenAPI` helpers, the runtime
-//! configuration for axum API binaries, and — under the `test-support`
-//! feature — oneshot HTTP test helpers.
+//! health-probe routing, tracing and metrics middleware, `OpenAPI` helpers,
+//! the runtime configuration for axum API binaries, and — under the
+//! `test-support` feature — oneshot HTTP test helpers.
 
 /// HTTP error-response body types ([`crate::api_error::ErrorBody`],
 /// [`crate::api_error::ValidationErrorBody`]) and the
@@ -38,6 +38,10 @@ pub mod health;
 
 /// OpenTelemetry-convention request tracing middleware.
 pub mod middleware;
+
+/// OpenTelemetry-convention HTTP server metrics middleware
+/// ([`crate::metrics::with_http_metrics`]).
+pub mod metrics;
 
 /// `OpenAPI` document handler and standard error-response transforms.
 pub mod openapi;

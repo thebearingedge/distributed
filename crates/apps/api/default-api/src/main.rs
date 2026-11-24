@@ -8,17 +8,18 @@ use clap::Parser;
 use tokio::net::TcpListener;
 
 use config::Args;
-use telemetry::provider::init_tracer_provider;
+use telemetry::Telemetry;
 use web::{
     graceful_shutdown::{Draining, graceful_shutdown},
     health,
+    metrics::with_http_metrics,
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let tracer_provider = init_tracer_provider("default_api");
+    let telemetry = Telemetry::init("default_api");
 
     let draining = Draining::default();
 
@@ -30,13 +31,15 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("listening at {address}");
 
-    let router = Router::new()
-        .route("/", get(|| async { StatusCode::OK }))
-        .merge(health::router(
-            vec![],
-            args.api.readiness_timeout(),
-            draining.clone(),
-        ));
+    let router = with_http_metrics(
+        Router::new().route("/", get(|| async { StatusCode::OK })),
+        telemetry.meter_provider(),
+    )
+    .merge(health::router(
+        vec![],
+        args.api.readiness_timeout(),
+        draining.clone(),
+    ));
 
     let shutdown_server = serve(listener, router)
         .with_graceful_shutdown(graceful_shutdown(draining, args.api.drain_delay()))
@@ -44,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("server stopped. cleaning up...");
 
-    let shutdown_telemetry = tracer_provider.shutdown();
+    let shutdown_telemetry = telemetry.shutdown();
 
     shutdown_server?;
     shutdown_telemetry?;

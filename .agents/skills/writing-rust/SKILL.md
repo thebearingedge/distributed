@@ -61,6 +61,18 @@ Leaks to avoid (found in past reviews):
 
 - **Imports**: three groups separated by blank lines, in this order — std library, third-party crates, then one contiguous block of internal workspace crates (`todos`, `database`, `telemetry`, `storage`, `utils`, `web`) together with the current crate's paths (`crate::` / `super::`) — project crate imports don't need separation lines (PR 66 review). rustfmt orders `super::`/`crate::` within the merged block, so they sort first — that is expected, not a formatting bug. The same rule applies inside `#[cfg(test)]` modules and to integration-test files under `crates/**/tests`.
 - **Error types**: one dedicated file per crate/layer named `<thing>_error.rs`, using `thiserror`. When wrapping a source error, interpolate `{source}` in the `#[error(...)]` message so diagnostics survive `Display` — this binds only for fields *named* `source`; for unnamed `#[source]` tuple fields, positional `{0}` is the correct equivalent (thiserror 2.x does not bind `{source}` for tuple fields; verified in review of issue #70). If a struct-variant split (like `DbError` → `StorageError` classification) is intentional, document it at the top of the file. (The app-layer HTTP error envelope convention is endpoint-specific — see `adding-an-endpoint`.)
+- **Metrics instrumentation**:
+  - SDK setup lives only in `telemetry` (`telemetry::Telemetry`, `telemetry::provider::*`).
+  - Instrumentation lives in the lib that owns the transport or resource (`web::metrics`, `database::metrics`,
+    a future queue lib). It depends on the `opentelemetry` API crate only.
+  - Take the provider explicitly (`meter_provider: &P` where `P: MeterProvider + ?Sized`) and name the
+    instrumentation scope `env!("CARGO_PKG_NAME")`. Never read the global provider inside a lib.
+  - Use OTel semantic-convention names as concept-prefixed consts.
+  - Never use unbounded values (raw paths, IDs, client-supplied strings) as attributes.
+  - Reuse `telemetry::metrics` (`duration_histogram`, `InFlightGuard`) rather than re-deriving buckets or
+    in-flight counting.
+  - Test through `telemetry::test_support::MetricsHarness` (dev-dependency feature `test-support`), and never
+    set the global meter provider in tests.
 - **Modules**: multi-file modules use the file-and-folder pattern — `mod.rs`-style parent file (`repositories.rs`) alongside its directory (`repositories/todos_repository.rs`). New sibling modules should match.
 - **Validation**: single source of truth. If a domain model validates (e.g. min length), don't re-encode the rule in the delivery layer (or make them agree); error messages must match the actual rule (`EmptyTask` shouldn't be raised when the real rule is "more than one character").
 - **Dependencies**: workspace deps come from the root `Cargo.toml` `[workspace.dependencies]` — reference with `workspace = true`. Before proposing a new third-party dependency, check that no existing workspace dependency already covers the need. Looking up the latest version of a crate (crates.io/docs.rs) is fine, but never add or upgrade a dependency without explicit human permission — propose the crate, version, and reason first, then wait. Never declare a dep a crate doesn't use (unused `uuid`, `thiserror`, `axum` were all flagged).
