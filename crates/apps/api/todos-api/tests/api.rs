@@ -110,6 +110,39 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn documents_413_on_body_accepting_operations(postgres: PgPool) {
+        let parts = get(todos_api(postgres), "/openapi.json").await;
+
+        assert_eq!(parts.status, StatusCode::OK);
+
+        let body = parts.body.expect("should have returned the document");
+
+        let post_responses = body["paths"]["/v1/todos"]["post"]["responses"]
+            .as_object()
+            .expect("addTodo should document its responses");
+        assert!(
+            post_responses.contains_key("413"),
+            "addTodo should document a 413 response"
+        );
+
+        let put_responses = body["paths"]["/v1/todos/{todo_id}"]["put"]["responses"]
+            .as_object()
+            .expect("updateTodo should document its responses");
+        assert!(
+            put_responses.contains_key("413"),
+            "updateTodo should document a 413 response"
+        );
+
+        let get_responses = body["paths"]["/v1/todos"]["get"]["responses"]
+            .as_object()
+            .expect("listTodos should document its responses");
+        assert!(
+            !get_responses.contains_key("413"),
+            "listTodos should not document a 413 response"
+        );
+    }
+
+    #[sqlx::test]
     async fn documents_descriptions_across_the_spec(postgres: PgPool) {
         let parts = get(todos_api(postgres), "/openapi.json").await;
 

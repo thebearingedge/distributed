@@ -1,12 +1,19 @@
 //! Shared axum web plumbing: HTTP error bodies, schema-validated extractors,
-//! health-probe routing, tracing and metrics middleware, `OpenAPI` helpers,
-//! the runtime configuration for axum API binaries, and — under the
-//! `test-support` feature — oneshot HTTP test helpers.
+//! health-probe routing, tracing and metrics middleware, request guardrails
+//! (timeout, body limit, catch-panic), `OpenAPI` helpers, the runtime
+//! configuration for axum API binaries, and — under the `test-support`
+//! feature — oneshot HTTP test helpers.
 
 /// HTTP error-response body types ([`crate::api_error::ErrorBody`],
 /// [`crate::api_error::ValidationErrorBody`]) and the
 /// [`crate::api_error::ApiError`] response wrapper.
 pub mod api_error;
+
+/// Request body-size limiting ([`crate::body_limit::with_body_limit`]).
+pub mod body_limit;
+
+/// Panic-to-500 middleware ([`crate::catch_panic::with_catch_panic`]).
+pub mod catch_panic;
 
 /// Runtime configuration for axum API binaries
 /// ([`crate::config::ApiConfig`]).
@@ -33,6 +40,9 @@ pub mod extractors;
 /// shutdown-signal handling ([`crate::graceful_shutdown::shutdown_signal`]).
 pub mod graceful_shutdown;
 
+/// Request guardrails composite ([`crate::guardrails::with_guardrails`]).
+pub mod guardrails;
+
 /// Liveness (`/livez`) and readiness (`/readyz`) probe router.
 pub mod health;
 
@@ -49,6 +59,9 @@ pub mod openapi;
 /// Request-ID middleware: generation, propagation, sanitization, and
 /// task-local access to the current request's ID.
 pub mod request_id;
+
+/// Request timeout middleware ([`crate::timeout::with_request_timeout`]).
+pub mod timeout;
 
 /// Oneshot HTTP test helpers for exercising routers and handlers
 /// ([`crate::test_support::get`], [`crate::test_support::post_json`],

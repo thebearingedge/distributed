@@ -12,6 +12,7 @@ use todos_api::{api::create_todos_api, app_state::AppState};
 use web::{
     cors::{CorsConfig, with_cors},
     graceful_shutdown::{Draining, graceful_shutdown},
+    guardrails::with_guardrails,
     health::{self, HealthCheck},
     metrics::with_http_metrics,
     middleware::with_http_tracing,
@@ -44,7 +45,10 @@ async fn main() -> anyhow::Result<()> {
 
     let router = with_http_metrics(
         with_cors(
-            with_http_tracing(create_todos_api(AppState::new(pool.clone()))),
+            with_http_tracing(with_guardrails(
+                create_todos_api(AppState::new(pool.clone())),
+                args.api.guardrails(),
+            )),
             CorsConfig {
                 allowed_origins,
                 ..CorsConfig::default()
