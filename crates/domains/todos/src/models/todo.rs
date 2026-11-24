@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::fmt::Write as _;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -15,7 +15,7 @@ pub struct NewTodoModel {
     /// [`Self::has_valid_task`]).
     pub task: String,
     /// When the todo was completed, or [`Option::None`] while it is open.
-    pub completed_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<Timestamp>,
 }
 
 impl NewTodoModel {
@@ -35,7 +35,7 @@ impl NewTodoModel {
     pub fn fingerprint(&self) -> String {
         let canonical_completed_at: Cow<'static, str> = self.completed_at.map_or_else(
             || Cow::Borrowed(FINGERPRINT_ABSENT_COMPLETED_AT),
-            |ts| Cow::Owned(ts.to_rfc3339()),
+            |ts| Cow::Owned(ts.to_string()),
         );
         let mut hasher = Sha256::new();
         hasher.update(format!(
@@ -80,9 +80,9 @@ pub struct TodoModel {
     /// Task description.
     pub task: String,
     /// When the todo was completed, or [`Option::None`] while it is open.
-    pub completed_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<Timestamp>,
     /// When the todo was last created or updated.
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 /// Filter for listing todos. All fields are optional conjunctive filters;
@@ -119,7 +119,7 @@ pub struct TodoCursor {
     /// Id of the last todo on the previous page.
     pub todo_id: Uuid,
     /// Update time of the last todo on the previous page.
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 impl From<&TodoModel> for TodoCursor {
@@ -134,6 +134,32 @@ impl From<&TodoModel> for TodoCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprint_pins_absent_completed_at() {
+        let todo = NewTodoModel {
+            task: "write the report".to_string(),
+            completed_at: None,
+        };
+
+        assert_eq!(
+            todo.fingerprint(),
+            "e860340bfeee1a3e31d409c1fe9b72555e34ac0f609bb90f086a6f8a02e26048"
+        );
+    }
+
+    #[test]
+    fn fingerprint_pins_present_completed_at() {
+        let todo = NewTodoModel {
+            task: "write the report".to_string(),
+            completed_at: Some(Timestamp::UNIX_EPOCH),
+        };
+
+        assert_eq!(
+            todo.fingerprint(),
+            "78b9c0a78661059024340e3fe8e825e2a81905006f14d4f06ea55306885df9b4"
+        );
+    }
 
     #[test]
     fn fingerprint_is_stable_across_calls() {
@@ -167,7 +193,7 @@ mod tests {
         };
         let other = NewTodoModel {
             task: "write the report".to_string(),
-            completed_at: Some(DateTime::<Utc>::UNIX_EPOCH),
+            completed_at: Some(Timestamp::UNIX_EPOCH),
         };
 
         assert_ne!(todo.fingerprint(), other.fingerprint());

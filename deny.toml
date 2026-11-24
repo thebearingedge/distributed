@@ -4,6 +4,17 @@ unsound = "all"
 
 [bans]
 multiple-versions = "warn"
+skip = [
+  { crate = "base64@0.22.1", reason = "sqlx-core 0.9.1 and tonic 0.14.9 both still require base64 0.22; both are the latest releases" },
+  { crate = "getrandom@0.3.4", reason = "opentelemetry_sdk 0.33.1 (latest) pulls rand 0.9.5 -> rand_core 0.9.5 -> getrandom 0.3, and ahash 0.8 runtime-rng joins; dies when otel releases on rand 0.10" },
+  { crate = "hashbrown@0.16.1", reason = "sqlx-core 0.9.1 (latest) uses hashbrown 0.16 directly and via hashlink 0.11; dies when sqlx moves to hashlink 0.12" },
+  { crate = "heck@0.4.1", reason = "sea-query-derive 1.0.0 (latest) still requires heck 0.4; dies at the next sea-query release with heck 0.5" },
+  { crate = "r-efi@5.3.0", reason = "getrandom 0.3.4 UEFI target dependency; same opentelemetry_sdk 0.33.1 root cause as getrandom@0.3.4" },
+  { crate = "rand@0.9.5", reason = "opentelemetry_sdk 0.33.1 (latest; otel 0.34 unreleased) still requires rand 0.9; dies when otel releases on rand 0.10" },
+  { crate = "rand_core@0.9.5", reason = "rand 0.9.5 via opentelemetry_sdk 0.33.1 (latest); dies with the otel rand-0.10 release" },
+  { crate = "syn@2.0.119", reason = "~10 proc-macro crates still on syn 2 (sqlx, tracing-attributes, axum-macros, darling via sea-query-derive, prost-derive, strum_macros, async-stream-impl, pin-project-internal, schemars_derive 0.9); decays as upstreams migrate to syn 3" },
+  { crate = "tower-http@0.6.11", reason = "reqwest 0.13.5 (latest) still requires tower-http 0.6 for follow-redirect; workspace is on 0.7; dies with reqwest 0.14" },
+]
 wildcards = "deny"
 allow-workspace = true
 allow-wildcard-paths = true

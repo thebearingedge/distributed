@@ -67,8 +67,7 @@ mod tests {
     fn content_type(res: &Response) -> String {
         res.headers()
             .get(header::CONTENT_TYPE)
-            .map(|v| v.to_str().unwrap().to_owned())
-            .unwrap_or_default()
+            .map_or_default(|v| v.to_str().unwrap().to_owned())
     }
 
     #[tokio::test]
@@ -91,8 +90,7 @@ mod tests {
         let allow = res
             .headers()
             .get(header::ALLOW)
-            .map(|v| v.to_str().unwrap().to_owned())
-            .unwrap_or_default();
+            .map_or_default(|v| v.to_str().unwrap().to_owned());
         let body = body_json(res).await;
         assert_json_include!(
             actual: body,

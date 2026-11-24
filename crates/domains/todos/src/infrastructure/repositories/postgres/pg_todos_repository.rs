@@ -1,8 +1,7 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
 use sea_query::extension::postgres::PgExpr;
-use sea_query::{Expr, ExprTrait, Iden, Order, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query::{Alias, Expr, ExprTrait, Iden, Order, PostgresQueryBuilder, Query, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{self, AssertSqlSafe};
 use tracing::instrument;
@@ -30,8 +29,8 @@ enum Todos {
 struct TodoRow {
     todo_id: Uuid,
     task: String,
-    completed_at: Option<DateTime<Utc>>,
-    updated_at: DateTime<Utc>,
+    completed_at: Option<jiff_sqlx::Timestamp>,
+    updated_at: jiff_sqlx::Timestamp,
 }
 
 impl From<TodoRow> for TodoModel {
@@ -39,8 +38,8 @@ impl From<TodoRow> for TodoModel {
         Self {
             todo_id: row.todo_id,
             task: row.task,
-            completed_at: row.completed_at,
-            updated_at: row.updated_at,
+            completed_at: row.completed_at.map(jiff_sqlx::Timestamp::to_jiff),
+            updated_at: row.updated_at.to_jiff(),
         }
     }
 }
@@ -65,10 +64,13 @@ impl PgTodosRepository {
 impl Interface for PgTodosRepository {
     #[instrument(skip_all)]
     async fn add(&self, todo: &NewTodoModel) -> Result<TodoModel, StorageError> {
+        let completed_at = todo.completed_at.map_or_else(Expr::null, |ts| {
+            Expr::value(ts.to_string()).cast_as(Alias::new("timestamptz"))
+        });
         let (text, values) = Query::insert()
             .into_table(Todos::Table)
             .columns([Todos::Task, Todos::CompletedAt])
-            .values_panic([Expr::val(&todo.task), Expr::val(todo.completed_at)])
+            .values_panic([Expr::val(&todo.task), completed_at])
             .returning(Query::returning().columns([
                 Todos::TodoId,
                 Todos::Task,
@@ -210,7 +212,10 @@ impl Interface for PgTodosRepository {
 /// positionally so rows sharing an `updated_at` still have a total order.
 fn cursor_predicate(sort_key: TodoSortKey, order: SortOrder, after: TodoCursor) -> SimpleExpr {
     let updated = Expr::tuple([Expr::col(Todos::UpdatedAt), Expr::col(Todos::TodoId)]);
-    let position = Expr::tuple([Expr::value(after.updated_at), Expr::value(after.todo_id)]);
+    let position = Expr::tuple([
+        Expr::value(after.updated_at.to_string()).cast_as(Alias::new("timestamptz")),
+        Expr::value(after.todo_id),
+    ]);
     match (sort_key, order) {
         (TodoSortKey::TodoId, SortOrder::Asc) => Expr::col(Todos::TodoId).gt(after.todo_id),
         (TodoSortKey::TodoId, SortOrder::Desc) => Expr::col(Todos::TodoId).lt(after.todo_id),
