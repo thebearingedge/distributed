@@ -1,53 +1,94 @@
 use opentelemetry::{global, trace::TracerProvider};
-use opentelemetry_otlp::SpanExporter;
-use opentelemetry_sdk::{Resource, propagation::TraceContextPropagator, trace::SdkTracerProvider};
+use opentelemetry_otlp::{MetricExporter, SpanExporter};
+use opentelemetry_sdk::{
+    Resource, metrics::SdkMeterProvider, propagation::TraceContextPropagator,
+    trace::SdkTracerProvider,
+};
 use tracing_opentelemetry::layer;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Log level used when `RUST_LOG` is unset or unparseable.
 const DEFAULT_FILTER_LEVEL: &str = "info";
 
-/// Initializes the global telemetry stack and returns the tracer provider.
+/// The OpenTelemetry resource identifying the service, combined with the
+/// SDK's default resource detectors.
 ///
-/// Installs the global tracing subscriber (JSON formatting, OTLP span export,
-/// [`EnvFilter`] driven by `RUST_LOG` with a `DEFAULT_FILTER_LEVEL` fallback)
-/// and the global W3C `TraceContext` propagator, then returns the
-/// [`SdkTracerProvider`] for the caller to shut down.
+/// Build one resource and share it between
+/// [`crate::provider::tracer_provider`] and
+/// [`crate::provider::meter_provider`], so spans and metrics report the same
+/// `service.name`.
+#[must_use]
+pub fn resource(service_name: &'static str) -> Resource {
+    Resource::builder().with_service_name(service_name).build()
+}
+
+/// Builds an OTLP gRPC batch-exporting tracer provider and installs no global
+/// state.
 ///
 /// The caller owns the returned provider and **must call
 /// [`SdkTracerProvider::shutdown`] on process exit** to flush in-flight span
-/// batches: the installed subscriber holds a clone of the provider's tracer,
-/// so dropping the provider alone is not sufficient.
+/// batches.
 ///
-/// # Errors
-///
-/// Configuration failures cannot be recovered here: an invalid [`SpanExporter`]
-/// configuration is reported by panicking (see `# Panics`) so that startup
-/// fails loudly. All fallible work happens before any global state is
-/// installed, so a failure leaves the process unmodified and re-initializing
-/// after fixing the configuration is safe.
+/// Must be called from within a Tokio runtime.
 ///
 /// # Panics
 ///
-/// Panics if [`SpanExporter`] configuration is invalid.
-///
-/// Panics if called twice: installing the global subscriber is a one-time,
-/// irreversible process-global side effect.
+/// Panics on invalid [`SpanExporter`] configuration, so that startup fails
+/// loudly before any global state is installed.
 #[must_use]
-pub fn init_tracer_provider(service_name: &'static str) -> SdkTracerProvider {
+pub fn tracer_provider(resource: Resource) -> SdkTracerProvider {
     let exporter = SpanExporter::builder()
         .with_tonic()
         .build()
         .expect("invalid otlp exporter configuration");
 
+    SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .with_resource(resource)
+        .build()
+}
+
+/// Builds an OTLP gRPC meter provider that exports periodically (every 60 s by
+/// default; the `OTEL_METRIC_EXPORT_INTERVAL` environment variable overrides
+/// it, in milliseconds) and installs no global state.
+///
+/// The caller owns the returned provider and **must call
+/// [`SdkMeterProvider::shutdown`] on process exit**, which performs the final
+/// metric export.
+///
+/// Must be called from within a Tokio runtime.
+///
+/// # Panics
+///
+/// Panics on invalid [`MetricExporter`] configuration, so that startup fails
+/// loudly before any global state is installed.
+#[must_use]
+pub fn meter_provider(resource: Resource) -> SdkMeterProvider {
+    let exporter = MetricExporter::builder()
+        .with_tonic()
+        .build()
+        .expect("invalid otlp metric exporter configuration");
+
+    SdkMeterProvider::builder()
+        .with_periodic_exporter(exporter)
+        .with_resource(resource)
+        .build()
+}
+
+/// Installs the global W3C `TraceContext` propagator and the global tracing
+/// subscriber: JSON to stdout, an [`EnvFilter`] driven by `RUST_LOG` with a
+/// `DEFAULT_FILTER_LEVEL` fallback, and spans exported through
+/// `tracer_provider`.
+///
+/// This is a one-time, process-global side effect.
+///
+/// # Panics
+///
+/// Panics if a global subscriber is already installed.
+pub fn init_subscriber(tracer_provider: &SdkTracerProvider, service_name: &'static str) {
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let provider = SdkTracerProvider::builder()
-        .with_batch_exporter(exporter)
-        .with_resource(Resource::builder().with_service_name(service_name).build())
-        .build();
-
-    let tracer = provider.tracer(service_name);
+    let tracer = tracer_provider.tracer(service_name);
 
     tracing_subscriber::registry()
         .with(
@@ -63,6 +104,19 @@ pub fn init_tracer_provider(service_name: &'static str) -> SdkTracerProvider {
                 .flatten_event(true),
         )
         .init();
+}
 
-    provider
+#[cfg(test)]
+mod tests {
+    use opentelemetry::{Key, Value};
+
+    use super::*;
+
+    #[test]
+    fn resource_carries_the_service_name() {
+        assert_eq!(
+            resource("svc").get(&Key::from_static_str("service.name")),
+            Some(Value::from("svc"))
+        );
+    }
 }

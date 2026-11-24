@@ -6,13 +6,14 @@ use clap::Parser;
 use tokio::net::TcpListener;
 
 use config::Args;
-use telemetry::provider::init_tracer_provider;
+use telemetry::Telemetry;
 use todos::MIGRATOR;
 use todos_api::{api::create_todos_api, app_state::AppState};
 use web::{
     cors::{CorsConfig, with_cors},
     graceful_shutdown::{Draining, graceful_shutdown},
     health::{self, HealthCheck},
+    metrics::with_http_metrics,
     middleware::with_http_tracing,
 };
 
@@ -22,11 +23,13 @@ mod config;
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let tracer_provider = init_tracer_provider("todos_api");
+    let telemetry = Telemetry::init("todos_api");
 
     let draining = Draining::default();
 
     let pool = args.db.connect().await?;
+
+    database::metrics::observe_pool(&pool, "todos", telemetry.meter_provider());
 
     tracing::info!("connected to postgres. running migrations...");
 
@@ -39,12 +42,15 @@ async fn main() -> anyhow::Result<()> {
         .allowed_origins()
         .context("invalid CORS_ALLOWED_ORIGINS")?;
 
-    let router = with_cors(
-        with_http_tracing(create_todos_api(AppState::new(pool.clone()))),
-        CorsConfig {
-            allowed_origins,
-            ..CorsConfig::default()
-        },
+    let router = with_http_metrics(
+        with_cors(
+            with_http_tracing(create_todos_api(AppState::new(pool.clone()))),
+            CorsConfig {
+                allowed_origins,
+                ..CorsConfig::default()
+            },
+        ),
+        telemetry.meter_provider(),
     )
     .merge(health::router(
         vec![HealthCheck::with_resource(
@@ -70,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
 
     pool.close().await;
 
-    let shutdown_telemetry = tracer_provider.shutdown();
+    let shutdown_telemetry = telemetry.shutdown();
 
     shutdown_server?;
     shutdown_telemetry?;

@@ -2,8 +2,8 @@
 //! error type with its classification predicates and the [`DbContext`]
 //! extension trait that wraps `sqlx` results with operation context, a
 //! readiness probe, the idempotency-key machinery behind idempotent
-//! create flows, and the pool [`DbConfig`] with its [`connect`](config::DbConfig::connect)
-//! helper.
+//! create flows, connection-pool usage metrics, and the pool [`DbConfig`]
+//! with its [`connect`](config::DbConfig::connect) helper.
 
 /// The connection [`DbConfig`] for app binaries and its
 /// [`connect`](config::DbConfig::connect) helper.
@@ -18,6 +18,9 @@ pub mod health;
 /// Idempotency keys, the repository port for claiming and completing them,
 /// and its Postgres adapter.
 pub mod idempotency;
+
+/// Connection-pool usage metrics ([`crate::metrics::observe_pool`]).
+pub mod metrics;
 
 /// The [`Database`] handle with transaction support: [`Conn`] access and
 /// the [`UnitOfWork`] owner.

@@ -9,6 +9,7 @@ storage.workspace = true
 
 async-trait.workspace = true
 clap.workspace = true
+opentelemetry.workspace = true
 sea-query.workspace = true
 sea-query-sqlx.workspace = true
 sqlx.workspace = true
@@ -16,6 +17,9 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+telemetry = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

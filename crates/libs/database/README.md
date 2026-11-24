@@ -14,6 +14,8 @@ any specific domain.
   idempotent request handling.
 - [`DbError` / `DbContext`](src/db_error.rs) — classified database errors and
   pool context.
+- [Pool metrics](src/metrics.rs) — `observe_pool` reports connection-pool
+  usage as OpenTelemetry metrics.
 - [`MIGRATOR`](src/lib.rs) — embeds the canonical base migrations in
   [migrations/](migrations/), used by this crate's own tests.
 

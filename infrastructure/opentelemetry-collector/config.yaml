@@ -21,3 +21,6 @@ service:
     logs:
       receivers: [otlp]
       exporters: [debug/detailed]
+    metrics:
+      receivers: [otlp]
+      exporters: [debug/detailed]

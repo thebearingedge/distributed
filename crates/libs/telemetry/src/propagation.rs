@@ -6,7 +6,7 @@
 //! extracting a parent context from request headers and attaching it to a
 //! new span. Both go through the globally installed text-map propagator (W3C
 //! `TraceContext`, installed by
-//! [`crate::provider::init_tracer_provider`]).
+//! [`crate::provider::init_subscriber`]).
 
 use http::{HeaderMap, HeaderName, HeaderValue};
 use opentelemetry::{
