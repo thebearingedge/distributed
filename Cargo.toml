@@ -36,7 +36,6 @@ opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.33.1", features = [
   "grpc-tonic",
   "trace",
-  "logs",
 ] }
 schemars = { version = "0.9", features = [
   "uuid1",
