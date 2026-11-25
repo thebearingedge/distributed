@@ -26,4 +26,6 @@ pub mod provider;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
+mod trace_ids;
+
 pub use bootstrap::Telemetry;
