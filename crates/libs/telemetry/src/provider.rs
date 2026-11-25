@@ -5,7 +5,7 @@ use opentelemetry_sdk::{
     trace::SdkTracerProvider,
 };
 use tracing_opentelemetry::layer;
-use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Log level used when `RUST_LOG` is unset or unparseable.
 const DEFAULT_FILTER_LEVEL: &str = "info";
@@ -78,7 +78,8 @@ pub fn meter_provider(resource: Resource) -> SdkMeterProvider {
 /// Installs the global W3C `TraceContext` propagator and the global tracing
 /// subscriber: JSON to stdout, an [`EnvFilter`] driven by `RUST_LOG` with a
 /// `DEFAULT_FILTER_LEVEL` fallback, and spans exported through
-/// `tracer_provider`.
+/// `tracer_provider`. Log lines emitted inside a traced span carry its
+/// `trace_id` and `span_id`.
 ///
 /// This is a one-time, process-global side effect.
 ///
@@ -96,13 +97,7 @@ pub fn init_subscriber(tracer_provider: &SdkTracerProvider, service_name: &'stat
                 .unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER_LEVEL)),
         )
         .with(layer().with_tracer(tracer))
-        .with(
-            fmt::layer()
-                .json()
-                .with_current_span(true)
-                .with_span_list(false)
-                .flatten_event(true),
-        )
+        .with(crate::trace_ids::json_log_layer(std::io::stdout))
         .init();
 }
 
