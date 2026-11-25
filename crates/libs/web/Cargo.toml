@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+runtime.workspace = true
 telemetry.workspace = true
 
 aide.workspace = true
@@ -36,6 +37,7 @@ telemetry = { workspace = true, features = ["test-support"] }
 
 http-body-util.workspace = true
 serde-json-assert.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 tower.workspace = true
 
 [lints]

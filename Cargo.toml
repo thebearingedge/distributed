@@ -14,6 +14,9 @@ telemetry = { path = "crates/libs/telemetry" }
 storage = { path = "crates/libs/storage" }
 utils = { path = "crates/libs/utils" }
 web = { path = "crates/libs/web" }
+jobs = { path = "crates/libs/jobs" }
+runtime = { path = "crates/libs/runtime" }
+worker = { path = "crates/libs/worker" }
 
 aide = { version = "0.15.1", features = ["axum", "axum-json", "axum-query"] }
 anyhow = "1.0.104"
@@ -69,6 +72,7 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 ] }
 thiserror = "2.0.21"
 tokio = { version = "1.53.2", features = ["full"] }
+tokio-util = "0.7.20"
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.1", features = ["trace", "cors"] }
 tracing = "0.1.44"

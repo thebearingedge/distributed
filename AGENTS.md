@@ -4,9 +4,9 @@
 
 `distributed` is a monorepo for distributed systems. Backend code is currently Rust — an edition 2024 workspace organized with Clean Architecture layering; Go and JavaScript may be introduced later. Three layers with dependency direction apps → domains → libs:
 
-- `crates/apps/` — deployables, at `crates/apps/<category>/<app>`: `api/todos-api` (axum HTTP API), `worker/email-worker`, `cli/ops-cli`
+- `crates/apps/` — deployables, at `crates/apps/<category>/<app>`: `api/default-api` (placeholder API), `api/todos-api` (axum HTTP API), `worker/default-worker` (placeholder worker), `job/default-job` (placeholder Kubernetes Job), `cli/ops-cli`
 - `crates/domains/` — business logic (e.g. `todos`): use_cases define repository ports, infrastructure implements them (sqlx + sea-query), migrations live in `crates/domains/<domain>/migrations`
-- `crates/libs/` — shared libraries: `web`, `database`, `storage`, `telemetry`, `utils`
+- `crates/libs/` — shared libraries: `web`, `database`, `storage`, `telemetry`, `utils`, `runtime` (process lifecycle: shutdown, exit statuses, heartbeat), `worker` (worker trait, probes, supervision), `jobs` (job trait and runner)
 
 Stack: axum, sqlx (Postgres), sea-query, opentelemetry, tracing, thiserror.
 
@@ -27,12 +27,13 @@ Tooling is managed via `direnv` (`.envrc` sets `CARGO_INSTALL_ROOT=tools/cargo` 
 | Task | Command |
 |---|---|
 | Check one crate | `just cargo-check <crate>` |
+| Build an app image | `just docker-build <app> [docker args]` (shared `tools/docker/Dockerfile.rust-app`; binary at `/app`) |
 | Format check (fix) | `just cargo-fmt` (`just cargo-fmt-fix`) |
 | Lint | `just cargo-lint` (clippy, `-D warnings`; per-crate: `just cargo-lint <crate>`) |
 | Test one crate | `just cargo-test <crate>` |
 | Test all | `just cargo-test-all` |
 | Coverage | `just cargo-cover` (HTML + lcov in `coverage/`) |
-| Run an app with hot reload | `just cargo-run <app> [args]` — valid `<app>` names are the crate names found in `crates/apps/**/Cargo.toml` (currently `todos-api`, `email-worker`, `ops-cli`) |
+| Run an app with hot reload | `just cargo-run <app> [args]` — valid `<app>` names are the crate names found in `crates/apps/**/Cargo.toml` (currently `default-api`, `todos-api`, `default-worker`, `default-job`, `ops-cli`) |
 | TDD loop | `just cargo-tdd <crate>` |
 | Migrations | `just migrate <domain> <action>` — the action passes through to `sqlx migrate` (`add` to create, `run` to apply, `revert` to undo, `revert --target-version 0` to revert all) |
 | Postgres shell | `just psql <database>` |

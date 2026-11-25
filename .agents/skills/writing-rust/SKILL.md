@@ -28,7 +28,7 @@ Two qualities carry extra weight in review, alongside the rules below:
 
 Dependency direction is strictly apps → domains → libs. Put new code where its dependencies point outward:
 
-- **HTTP/framework/CLI concerns** (axum handlers, extractors, config parsing, `main`) → `crates/apps/<category>/<app>` (e.g. `api/todos-api`, `worker/email-worker`, `cli/ops-cli`)
+- **HTTP/framework/CLI concerns** (axum handlers, extractors, config parsing, `main`) → `crates/apps/<category>/<app>` (e.g. `api/default-api`, `api/todos-api`, `worker/default-worker`, `job/default-job`, `cli/ops-cli`)
 - **Business rules, ports, use cases** → `crates/domains/<domain>/src/use_cases`
 - **Domain models and invariants** (validation like `has_valid_task`) → `crates/domains/<domain>/src/models`
 - **Database implementations** (sqlx, sea-query) → `crates/domains/<domain>/src/infrastructure`
@@ -59,7 +59,7 @@ Leaks to avoid (found in past reviews):
 
 ## Patterns
 
-- **Imports**: three groups separated by blank lines, in this order — std library, third-party crates, then one contiguous block of internal workspace crates (`todos`, `database`, `telemetry`, `storage`, `utils`, `web`) together with the current crate's paths (`crate::` / `super::`) — project crate imports don't need separation lines (PR 66 review). rustfmt orders `super::`/`crate::` within the merged block, so they sort first — that is expected, not a formatting bug. The same rule applies inside `#[cfg(test)]` modules and to integration-test files under `crates/**/tests`.
+- **Imports**: three groups separated by blank lines, in this order — std library, third-party crates, then one contiguous block of internal workspace crates (`todos`, `database`, `telemetry`, `storage`, `utils`, `web`, `runtime`, `worker`, `jobs`) together with the current crate's paths (`crate::` / `super::`) — project crate imports don't need separation lines (PR 66 review). rustfmt orders `super::`/`crate::` within the merged block, so they sort first — that is expected, not a formatting bug. The same rule applies inside `#[cfg(test)]` modules and to integration-test files under `crates/**/tests`.
 - **Error types**: one dedicated file per crate/layer named `<thing>_error.rs`, using `thiserror`. When wrapping a source error, interpolate `{source}` in the `#[error(...)]` message so diagnostics survive `Display` — this binds only for fields *named* `source`; for unnamed `#[source]` tuple fields, positional `{0}` is the correct equivalent (thiserror 2.x does not bind `{source}` for tuple fields; verified in review of issue #70). If a struct-variant split (like `DbError` → `StorageError` classification) is intentional, document it at the top of the file. (The app-layer HTTP error envelope convention is endpoint-specific — see `adding-an-endpoint`.)
 - **Metrics instrumentation**:
   - SDK setup lives only in `telemetry` (`telemetry::Telemetry`, `telemetry::provider::*`).
@@ -77,8 +77,8 @@ Leaks to avoid (found in past reviews):
   `with_<thing>(router, ..) -> Router` functions; apps only compose them. Required
   order, outermost first: `with_http_metrics` → `with_cors` → `with_http_tracing`
   (request id + span) → `web::guardrails::with_guardrails` (catch-panic → timeout →
-  body limit) → the API router; merge `health::router` last so probes bypass the
-  layers. Layers that build `ApiError` bodies must sit inside `with_http_tracing` so
+  body limit) → the API router; merge `health::HealthRouter::new(..)…into_router()`
+  last so probes bypass the layers. Layers that build `ApiError` bodies must sit inside `with_http_tracing` so
   the body carries `requestId`. Every API binary calls
   `with_guardrails(.., args.api.guardrails())`, and integration-test routers in
   `tests/common.rs` mirror `main.rs` layering with `GuardrailsConfig::default()`.
@@ -88,7 +88,21 @@ Leaks to avoid (found in past reviews):
 - **Validation**: single source of truth. If a domain model validates (e.g. min length), don't re-encode the rule in the delivery layer (or make them agree); error messages must match the actual rule (`EmptyTask` shouldn't be raised when the real rule is "more than one character").
 - **Dependencies**: workspace deps come from the root `Cargo.toml` `[workspace.dependencies]` — reference with `workspace = true`. Before proposing a new third-party dependency, check that no existing workspace dependency already covers the need. Looking up the latest version of a crate (crates.io/docs.rs) is fine, but never add or upgrade a dependency without explicit human permission — propose the crate, version, and reason first, then wait. Never declare a dep a crate doesn't use (unused `uuid`, `thiserror`, `axum` were all flagged).
 - **Magic numbers** in shared plumbing (timeouts, limits): accept them as parameters or name them as constants — no bare literals with no configuration path.
+- **Time in tests**: time-dependent tests run under `#[tokio::test(start_paused = true)]` and move the clock with auto-advancing sleeps/timeouts or `tokio::time::advance(..)` — never real-time delays (details in "Process shapes").
 - **`#[sqlx::test]` migrations**: add `migrator = "<domain>::MIGRATOR"` (plus `fixtures(...)`) only when the test executes SQL against that domain's schema — route handlers that query or write, repository tests, anything touching the tables. Tests that never run SQL — OpenAPI document checks, 404/405 fallback behavior, middleware/request-id plumbing, pool-failure paths — use a plain `#[sqlx::test]` (a fresh, empty database) so migration time isn't paid on every run. When in doubt, trace the route: if the handler's success and failure paths both leave the pool untouched, the schema isn't needed.
+
+## Process shapes (API, worker, job)
+
+- **Lifecycle primitives** live in `runtime` (tokio-only; it never depends on axum, web or telemetry): `runtime::shutdown::Shutdown` is the one shutdown handle per process — clone it into every task; `runtime::exit_status::ExitStatus` is the exit taxonomy (0 success / 1 retryable / 2 permanent / 143 interrupted); `runtime::run_error::RunError` classifies failures as retryable or permanent; `runtime::heartbeat::Heartbeat` carries worker liveness.
+- **Signal installation**: API binaries call `shutdown.listen_for_signals()` immediately before `serve` (after bind/connect/migrate), so SIGTERM during startup keeps its default behavior; `worker::launch` and `jobs::launch` install the handlers at startup.
+- **Workers** implement `worker::Worker` (`#[async_trait]`): they must call `context.heartbeat().beat()` at least every `context.heartbeat().interval()` and return once `context.shutdown()` is triggered — returning earlier exits 1. The app `main` flattens `worker::WorkerConfig` and calls `worker::launch(service_name, &worker, &args.worker)`. `/livez` is heartbeat-backed and `/readyz` flips to `503 shutting_down` on shutdown.
+- **Jobs** implement `jobs::Job` (`#[async_trait]`) and are idempotent. They observe the `Shutdown` they receive; an error returned after shutdown exits 143, and permanent failures return `RunError::permanent(..)` (exit 2, for `podFailurePolicy` `FailJob`). The app `main` calls `jobs::launch(service_name, &job)`; `jobs` never depends on axum or web.
+- **Testability split**: `launch` is untested wiring because it calls the process-global `Telemetry::init`; behavior lives in testable cores that take an injected `Shutdown` (`worker::supervise`, `worker::probes_router`, `jobs::run`). Lib tests never call `Telemetry::init` and never send real signals.
+- **Time in tests**: time-dependent tests use `#[tokio::test(start_paused = true)]` (tokio `test-util`, enabled only in lib `[dev-dependencies]`) and move the clock with auto-advancing sleeps/timeouts or `tokio::time::advance(..)` (it is async and must be awaited); never real-time delays. Time-reading lib code uses `tokio::time::Instant`, so it follows the paused clock.
+- **Runtimes**: binaries use the default multi-thread `#[tokio::main]`, never `current_thread` — OTLP shutdown hangs on it.
+- **Telemetry flush failures** are logged with `tracing::warn!` and never change the exit status.
+- **Service names**: the compiled-in name passed to `launch`/`Telemetry::init` is a default; `OTEL_SERVICE_NAME` overrides it per deployment.
+- **Images**: every app builds from `tools/docker/Dockerfile.rust-app` via `just docker-build <app>`; no per-app Dockerfiles, and the container binary is always `/app`.
 
 ## Configuration
 

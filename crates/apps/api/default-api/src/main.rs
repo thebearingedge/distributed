@@ -8,11 +8,10 @@ use clap::Parser;
 use tokio::net::TcpListener;
 
 use config::Args;
+use runtime::shutdown::Shutdown;
 use telemetry::Telemetry;
 use web::{
-    graceful_shutdown::{Draining, graceful_shutdown},
-    guardrails::with_guardrails,
-    health,
+    graceful_shutdown::graceful_shutdown, guardrails::with_guardrails, health,
     metrics::with_http_metrics,
 };
 
@@ -22,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
 
     let telemetry = Telemetry::init("default_api");
 
-    let draining = Draining::default();
+    let shutdown = Shutdown::new();
 
     let address = args.api.listen_address;
 
@@ -39,14 +38,14 @@ async fn main() -> anyhow::Result<()> {
         ),
         telemetry.meter_provider(),
     )
-    .merge(health::router(
-        vec![],
-        args.api.readiness_timeout(),
-        draining.clone(),
-    ));
+    .merge(health::HealthRouter::new(args.api.readiness_timeout(), shutdown.clone()).into_router());
+
+    shutdown
+        .listen_for_signals()
+        .context("installing signal handlers")?;
 
     let shutdown_server = serve(listener, router)
-        .with_graceful_shutdown(graceful_shutdown(draining, args.api.drain_delay()))
+        .with_graceful_shutdown(graceful_shutdown(shutdown, args.api.drain_delay()))
         .await;
 
     tracing::info!("server stopped. cleaning up...");

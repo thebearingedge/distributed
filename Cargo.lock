@@ -580,10 +580,29 @@ dependencies = [
  "anyhow",
  "axum",
  "clap",
+ "runtime",
  "telemetry",
  "tokio",
  "tracing",
  "web",
+]
+
+[[package]]
+name = "default-job"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "jobs",
+ "tokio",
+]
+
+[[package]]
+name = "default-worker"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "tokio",
+ "worker",
 ]
 
 [[package]]
@@ -635,10 +654,6 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 dependencies = [
  "serde",
 ]
-
-[[package]]
-name = "email-worker"
-version = "0.1.0"
 
 [[package]]
 name = "email_address"
@@ -1391,6 +1406,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jobs"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "runtime",
+ "telemetry",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "jobserver"
 version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2118,6 +2144,16 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "runtime"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -2920,6 +2956,7 @@ dependencies = [
  "database",
  "jiff",
  "jsonschema",
+ "runtime",
  "schemars",
  "serde",
  "serde-json-assert",
@@ -3457,6 +3494,7 @@ dependencies = [
  "http-body-util",
  "jsonschema",
  "opentelemetry",
+ "runtime",
  "schemars",
  "serde",
  "serde-json-assert",
@@ -3615,6 +3653,21 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "worker"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "clap",
+ "runtime",
+ "serde_json",
+ "telemetry",
+ "tokio",
+ "tracing",
+ "web",
+]
 
 [[package]]
 name = "writeable"
