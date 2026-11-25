@@ -13,8 +13,9 @@ use aide::{
 use axum::{
     Json,
     extract::{
-        FromRequest, FromRequestParts, Path, Query, Request, path::ErrorKind,
-        rejection::PathRejection,
+        FromRequest, FromRequestParts, Path, Query, Request,
+        path::ErrorKind,
+        rejection::{JsonRejection, PathRejection},
     },
     http::{StatusCode, request::Parts},
 };
@@ -37,6 +38,8 @@ pub trait HasSchema<T> {
 
 const SCHEMA_VIOLATION: &str = "schema violation";
 
+const BODY_TOO_LARGE_MESSAGE: &str = "request body too large";
+
 /// Location formatter for JSON request bodies: the schema's JSON Pointer is
 /// already the client-facing location, so it is passed through verbatim.
 fn raw_pointer(pointer: &str) -> String {
@@ -50,6 +53,10 @@ fn raw_pointer(pointer: &str) -> String {
 /// [`ValidationDetail::path`] is a JSON Pointer into the request body
 /// (e.g. `/task`); see [`ValidationDetail`] in `api_error.rs` for the full
 /// location convention shared by all `Validated*` extractors.
+///
+/// A body over the configured limit
+/// ([`crate::body_limit::with_body_limit`]) is rejected with `413` and the
+/// fixed message; all other rejections behave as before.
 pub struct ValidatedJson<T>(pub T);
 
 impl<S, T> FromRequest<S> for ValidatedJson<T>
@@ -62,7 +69,7 @@ where
     async fn from_request(req: Request, app_state: &S) -> Result<Self, Self::Rejection> {
         let Json(data) = Json::<serde_json::Value>::from_request(req, app_state)
             .await
-            .map_err(|e| ApiError::message(e.status(), &e.body_text()))?;
+            .map_err(|e| json_rejection_error(&e))?;
 
         validate_instance(app_state.validator_for(), &data, raw_pointer)?;
 
@@ -90,6 +97,15 @@ where
         operation: &mut aide::openapi::Operation,
     ) {
         <Json<T> as aide::OperationInput>::operation_input(ctx, operation);
+    }
+}
+
+fn json_rejection_error(rejection: &JsonRejection) -> ApiError {
+    match rejection.status() {
+        StatusCode::PAYLOAD_TOO_LARGE => {
+            ApiError::message(StatusCode::PAYLOAD_TOO_LARGE, BODY_TOO_LARGE_MESSAGE)
+        }
+        status => ApiError::message(status, &rejection.body_text()),
     }
 }
 

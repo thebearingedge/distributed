@@ -7,9 +7,16 @@ use axum::Router;
 use sqlx::PgPool;
 
 use todos_api::{api::create_todos_api, app_state::AppState};
-use web::middleware::with_http_tracing;
+use web::{
+    guardrails::{GuardrailsConfig, with_guardrails},
+    middleware::with_http_tracing,
+};
 
-/// Builds the todos API router against the test database.
+/// Builds the todos API router against the test database, layered like `main.rs`
+/// (request guardrails inside request-id tracing).
 pub fn todos_api(postgres: PgPool) -> Router {
-    with_http_tracing(create_todos_api(AppState::new(postgres)))
+    with_http_tracing(with_guardrails(
+        create_todos_api(AppState::new(postgres)),
+        GuardrailsConfig::default(),
+    ))
 }

@@ -25,7 +25,7 @@ pub fn openapi_json(Extension(api): Extension<Arc<OpenApi>>) -> Ready<Json<Arc<O
 
 /// The standard error responses every operation can produce, regardless of
 /// method: 400 (bad request), 422 (deserialization/schema violation), 500
-/// (internal), and 503 (unavailable).
+/// (internal), and 503 (unavailable, including request timeouts).
 fn standard_errors(op: TransformOperation<'_>) -> TransformOperation<'_> {
     op.response::<400, Json<ErrorBody>>()
         .response::<422, Json<ValidationErrorBody>>()
@@ -39,15 +39,19 @@ pub fn standard_get_errors(op: TransformOperation<'_>) -> TransformOperation<'_>
 }
 
 /// Documents the standard error responses of a POST operation: the GET set
-/// plus 415 (unsupported media type).
+/// plus 413 (payload too large) and 415 (unsupported media type).
 pub fn standard_post_errors(op: TransformOperation<'_>) -> TransformOperation<'_> {
-    standard_errors(op).response::<415, Json<ErrorBody>>()
+    standard_errors(op)
+        .response::<413, Json<ErrorBody>>()
+        .response::<415, Json<ErrorBody>>()
 }
 
-/// Documents the standard error responses of a PUT operation: the GET
-/// set plus 415 (unsupported media type).
+/// Documents the standard error responses of a PUT operation: the GET set
+/// plus 413 (payload too large) and 415 (unsupported media type).
 pub fn standard_put_errors(op: TransformOperation<'_>) -> TransformOperation<'_> {
-    standard_errors(op).response::<415, Json<ErrorBody>>()
+    standard_errors(op)
+        .response::<413, Json<ErrorBody>>()
+        .response::<415, Json<ErrorBody>>()
 }
 
 /// Documents the standard error responses of a DELETE operation
@@ -103,7 +107,44 @@ mod tests {
     use serde_json::json;
     use serde_json_assert::assert_json_include;
 
-    use super::response_header;
+    use super::{
+        response_header, standard_delete_errors, standard_get_errors, standard_post_errors,
+        standard_put_errors,
+    };
+
+    fn documented_codes(
+        transform: fn(TransformOperation<'_>) -> TransformOperation<'_>,
+    ) -> Vec<StatusCode> {
+        let mut operation = Operation::default();
+        drop(transform(TransformOperation::new(&mut operation)));
+        operation
+            .responses
+            .expect("responses")
+            .responses
+            .into_keys()
+            .collect()
+    }
+
+    #[test]
+    fn post_and_put_document_413() {
+        for codes in [
+            documented_codes(standard_post_errors),
+            documented_codes(standard_put_errors),
+        ] {
+            assert!(codes.contains(&StatusCode::Code(413)));
+            assert!(codes.contains(&StatusCode::Code(415)));
+        }
+    }
+
+    #[test]
+    fn get_and_delete_do_not_document_413() {
+        for codes in [
+            documented_codes(standard_get_errors),
+            documented_codes(standard_delete_errors),
+        ] {
+            assert!(!codes.contains(&StatusCode::Code(413)));
+        }
+    }
 
     #[test]
     fn response_header_documents_a_required_string_header() {

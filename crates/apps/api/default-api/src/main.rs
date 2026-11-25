@@ -11,6 +11,7 @@ use config::Args;
 use telemetry::Telemetry;
 use web::{
     graceful_shutdown::{Draining, graceful_shutdown},
+    guardrails::with_guardrails,
     health,
     metrics::with_http_metrics,
 };
@@ -32,7 +33,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("listening at {address}");
 
     let router = with_http_metrics(
-        Router::new().route("/", get(|| async { StatusCode::OK })),
+        with_guardrails(
+            Router::new().route("/", get(|| async { StatusCode::OK })),
+            args.api.guardrails(),
+        ),
         telemetry.meter_provider(),
     )
     .merge(health::router(

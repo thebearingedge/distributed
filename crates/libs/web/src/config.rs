@@ -6,10 +6,17 @@ use std::time::Duration;
 use axum::http::HeaderValue;
 
 use crate::cors::{ParseOriginsError, parse_allowed_origins};
+use crate::guardrails::GuardrailsConfig;
+
+/// Default for [`crate::config::ApiConfig::request_timeout_seconds`].
+pub const REQUEST_TIMEOUT_DEFAULT_SECONDS: u64 = 30;
+/// Default for [`crate::config::ApiConfig::request_body_limit_bytes`] (1 MiB).
+pub const REQUEST_BODY_LIMIT_DEFAULT_BYTES: usize = 1_048_576;
 
 /// Runtime configuration for an axum API binary: listener address, drain
-/// delay, readiness timeout, and CORS origins. CLI args fall back to env
-/// vars, which fall back to declared defaults.
+/// delay, readiness timeout, CORS origins, request timeout, and request
+/// body limit. CLI args fall back to env vars, which fall back to declared
+/// defaults.
 #[derive(Debug, clap::Parser)]
 pub struct ApiConfig {
     /// Address and port to bind the listener to.
@@ -26,6 +33,14 @@ pub struct ApiConfig {
     /// requests; unset or empty means CORS is off.
     #[arg(long, env = "CORS_ALLOWED_ORIGINS")]
     pub cors_allowed_origins: Option<String>,
+    /// Seconds a request may take to produce a response before it is
+    /// answered with `503 Service Unavailable`.
+    #[arg(long, env = "REQUEST_TIMEOUT_SECONDS", default_value_t = REQUEST_TIMEOUT_DEFAULT_SECONDS)]
+    pub request_timeout_seconds: u64,
+    /// Maximum request body size in bytes; larger bodies are rejected with
+    /// `413 Payload Too Large`.
+    #[arg(long, env = "REQUEST_BODY_LIMIT_BYTES", default_value_t = REQUEST_BODY_LIMIT_DEFAULT_BYTES)]
+    pub request_body_limit_bytes: usize,
 }
 
 impl ApiConfig {
@@ -39,6 +54,29 @@ impl ApiConfig {
     #[must_use]
     pub fn readiness_timeout(&self) -> Duration {
         Duration::from_secs(self.readiness_timeout_seconds)
+    }
+
+    /// Time a request may take to produce a response before it is answered
+    /// with `503 Service Unavailable`.
+    #[must_use]
+    pub fn request_timeout(&self) -> Duration {
+        Duration::from_secs(self.request_timeout_seconds)
+    }
+
+    /// Maximum request body size in bytes; larger bodies are rejected with
+    /// `413 Payload Too Large`.
+    #[must_use]
+    pub fn request_body_limit(&self) -> usize {
+        self.request_body_limit_bytes
+    }
+
+    /// The request guardrails configured for this binary.
+    #[must_use]
+    pub fn guardrails(&self) -> GuardrailsConfig {
+        GuardrailsConfig {
+            request_timeout: self.request_timeout(),
+            body_limit_bytes: self.request_body_limit(),
+        }
     }
 
     /// Exact origins allowed to make cross-origin requests; empty means
@@ -63,7 +101,7 @@ mod tests {
     use axum::http::HeaderValue;
     use clap::Parser;
 
-    use super::ApiConfig;
+    use super::{ApiConfig, GuardrailsConfig};
 
     #[test]
     fn defaults_apply_when_no_args_or_env() {
@@ -72,6 +110,8 @@ mod tests {
         assert_eq!(config.shutdown_drain_seconds, 0);
         assert_eq!(config.readiness_timeout_seconds, 2);
         assert_eq!(config.cors_allowed_origins, None);
+        assert_eq!(config.request_timeout_seconds, 30);
+        assert_eq!(config.request_body_limit_bytes, 1_048_576);
     }
 
     #[test]
@@ -122,12 +162,18 @@ mod tests {
             "4",
             "--cors-allowed-origins",
             "http://a",
+            "--request-timeout-seconds",
+            "9",
+            "--request-body-limit-bytes",
+            "2048",
         ])
         .unwrap();
         assert_eq!(args.api.listen_address.to_string(), "127.0.0.1:8080");
         assert_eq!(args.api.shutdown_drain_seconds, 3);
         assert_eq!(args.api.readiness_timeout_seconds, 4);
         assert_eq!(args.api.cors_allowed_origins.as_deref(), Some("http://a"));
+        assert_eq!(args.api.request_timeout_seconds, 9);
+        assert_eq!(args.api.request_body_limit_bytes, 2048);
     }
 
     #[test]
@@ -138,9 +184,25 @@ mod tests {
             "5",
             "--readiness-timeout-seconds",
             "7",
+            "--request-timeout-seconds",
+            "11",
         ])
         .unwrap();
         assert_eq!(config.drain_delay(), Duration::from_secs(5));
         assert_eq!(config.readiness_timeout(), Duration::from_secs(7));
+        assert_eq!(config.request_timeout(), Duration::from_secs(11));
+    }
+
+    #[test]
+    fn request_body_limit_returns_the_configured_bytes() {
+        let config =
+            ApiConfig::try_parse_from(["todos-api", "--request-body-limit-bytes", "4096"]).unwrap();
+        assert_eq!(config.request_body_limit(), 4096);
+    }
+
+    #[test]
+    fn guardrails_defaults_match_the_guardrails_config_default() {
+        let config = ApiConfig::try_parse_from(["todos-api"]).unwrap();
+        assert_eq!(config.guardrails(), GuardrailsConfig::default());
     }
 }

@@ -47,6 +47,11 @@ In `crates/apps/<category>/<app>/src` (e.g. `crates/apps/api/todos-api/src`), wo
 
 - Mount the route with `ApiRouter` and a transform closure. Set `op.id(...)` (camelCase `operationId`, e.g. `listThings`), `.summary(...)`, and **`.description(...)` — aide cannot read handler doc comments**, so the operation description is a deliberate duplicate of the handler's doc-comment first paragraph; keep the two in sync (the file carries a keep-in-sync note).
 - Chain the response types (`.response::<code, Json<T>>`) and the shared `standard_get_errors`/`standard_post_errors`/`standard_put_errors` transforms for the documented error responses.
+- The standard transforms already document the guardrail responses: 500 (caught
+  panic) and 503 (including request timeouts) on every operation, and 413
+  (body over `REQUEST_BODY_LIMIT_BYTES`) on POST/PUT. Don't re-add them per
+  operation; read request bodies through `ValidatedJson` so the 413 keeps the JSON
+  error shape.
 - The OpenAPI document is generated at runtime by aide and served at `GET /openapi.json` — there is no committed `openapi.json` file. Success-response descriptions come from the response DTO's doc comment; if a response shows `description: ""`, the DTO is missing its doc comment.
 
 ## 4. Tests

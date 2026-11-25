@@ -73,6 +73,17 @@ Leaks to avoid (found in past reviews):
     in-flight counting.
   - Test through `telemetry::test_support::MetricsHarness` (dev-dependency feature `test-support`), and never
     set the global meter provider in tests.
+- **API layer composition**: HTTP cross-cutting layers live in `web` as
+  `with_<thing>(router, ..) -> Router` functions; apps only compose them. Required
+  order, outermost first: `with_http_metrics` → `with_cors` → `with_http_tracing`
+  (request id + span) → `web::guardrails::with_guardrails` (catch-panic → timeout →
+  body limit) → the API router; merge `health::router` last so probes bypass the
+  layers. Layers that build `ApiError` bodies must sit inside `with_http_tracing` so
+  the body carries `requestId`. Every API binary calls
+  `with_guardrails(.., args.api.guardrails())`, and integration-test routers in
+  `tests/common.rs` mirror `main.rs` layering with `GuardrailsConfig::default()`.
+  Layers that return empty or plain-text bodies (tower-http `TimeoutLayer`,
+  `RequestBodyLimitLayer`) are not used, because they break the JSON error shape.
 - **Modules**: multi-file modules use the file-and-folder pattern — `mod.rs`-style parent file (`repositories.rs`) alongside its directory (`repositories/todos_repository.rs`). New sibling modules should match.
 - **Validation**: single source of truth. If a domain model validates (e.g. min length), don't re-encode the rule in the delivery layer (or make them agree); error messages must match the actual rule (`EmptyTask` shouldn't be raised when the real rule is "more than one character").
 - **Dependencies**: workspace deps come from the root `Cargo.toml` `[workspace.dependencies]` — reference with `workspace = true`. Before proposing a new third-party dependency, check that no existing workspace dependency already covers the need. Looking up the latest version of a crate (crates.io/docs.rs) is fine, but never add or upgrade a dependency without explicit human permission — propose the crate, version, and reason first, then wait. Never declare a dep a crate doesn't use (unused `uuid`, `thiserror`, `axum` were all flagged).
