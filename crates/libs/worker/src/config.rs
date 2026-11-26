@@ -1,13 +1,15 @@
 //! Runtime configuration for a worker binary: probe-server address,
-//! health-check timeout, and heartbeat staleness. CLI args fall back to env
-//! vars, which fall back to declared defaults.
+//! health-check timeout, heartbeat staleness, and process lifecycle. CLI args
+//! fall back to env vars, which fall back to declared defaults.
 
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use runtime::config::LifecycleConfig;
+
 /// Runtime configuration for a worker binary: probe-server address,
-/// health-check timeout, and heartbeat staleness. CLI args fall back to env
-/// vars, which fall back to declared defaults.
+/// health-check timeout, heartbeat staleness, and process lifecycle. CLI args
+/// fall back to env vars, which fall back to declared defaults.
 #[derive(Debug, clap::Parser)]
 pub struct WorkerConfig {
     /// Address and port the liveness/readiness probe server binds to.
@@ -21,6 +23,10 @@ pub struct WorkerConfig {
     /// at least 1.
     #[arg(long, env = "HEARTBEAT_STALE_SECONDS", default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
     pub heartbeat_stale_seconds: u64,
+    /// Process lifecycle configuration: drain delay, shutdown deadline,
+    /// and final flush budget.
+    #[command(flatten)]
+    pub lifecycle: LifecycleConfig,
 }
 
 impl WorkerConfig {
@@ -52,6 +58,7 @@ mod tests {
         assert_eq!(config.health_listen_address.to_string(), "0.0.0.0:3000");
         assert_eq!(config.health_check_timeout_seconds, 2);
         assert_eq!(config.heartbeat_stale_seconds, 30);
+        assert_eq!(config.lifecycle.shutdown_timeout_seconds, 20);
     }
 
     #[test]
@@ -83,6 +90,22 @@ mod tests {
         .unwrap();
         assert_eq!(config.health_check_timeout(), Duration::from_secs(7));
         assert_eq!(config.heartbeat_stale_after(), Duration::from_secs(45));
+    }
+
+    #[test]
+    fn lifecycle_flags_flatten_without_id_collisions() {
+        let config = WorkerConfig::try_parse_from([
+            "test",
+            "--shutdown-drain-seconds",
+            "2",
+            "--shutdown-timeout-seconds",
+            "8",
+            "--heartbeat-stale-seconds",
+            "45",
+        ])
+        .unwrap();
+        assert_eq!(config.lifecycle.deadline(), Duration::from_secs(10));
+        assert_eq!(config.heartbeat_stale_seconds, 45);
     }
 
     #[test]

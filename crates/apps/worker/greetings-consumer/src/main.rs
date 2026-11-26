@@ -14,5 +14,5 @@ use greetings_consumer_worker::GreetingsConsumerWorker;
 async fn main() -> ExitCode {
     let args = Args::parse();
     let worker = GreetingsConsumerWorker::new(args.kafka, args.consumer);
-    worker::launch("greetings_consumer", &worker, &args.worker).await
+    worker::launch("greetings_consumer", worker, &args.worker).await
 }

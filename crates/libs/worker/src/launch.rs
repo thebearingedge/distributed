@@ -1,23 +1,27 @@
 //! The worker process composition root.
 
-use std::future::IntoFuture;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use tokio::net::TcpListener;
 
 use runtime::exit_status::ExitStatus;
 use runtime::heartbeat::Heartbeat;
+use runtime::lifecycle::{RunOutcome, finish};
 use runtime::shutdown::Shutdown;
 use telemetry::Telemetry;
+use web::server::serve;
 
 use crate::config::WorkerConfig;
 use crate::probes::probes_router;
 use crate::supervisor::supervise;
 use crate::worker::{Worker, WorkerContext};
 
-/// Initializes telemetry, installs shutdown signal handlers, binds the probe
-/// listener, and supervises the worker and its probe server until both have
-/// stopped, returning the process [`ExitCode`].
+/// Initializes telemetry, installs shutdown signal handlers (a second signal
+/// exits 143 immediately), binds the probe listener, and supervises the worker
+/// and its probe server on a [`runtime::supervisor::Supervisor`] with the
+/// shutdown deadline from `config.lifecycle`, ending with a bounded telemetry
+/// flush. Returns the process [`ExitCode`].
 ///
 /// `service_name` is the default `service.name`, which `OTEL_SERVICE_NAME`
 /// overrides.
@@ -26,18 +30,23 @@ use crate::worker::{Worker, WorkerContext};
 ///
 /// Panics if called outside a multi-thread Tokio runtime or twice per process
 /// (see `telemetry::Telemetry::init`).
-pub async fn launch<W: Worker + ?Sized>(
+pub async fn launch<W: Worker + 'static>(
     service_name: &'static str,
-    worker: &W,
+    worker: W,
     config: &WorkerConfig,
 ) -> ExitCode {
     let telemetry = Telemetry::init(service_name);
+    let lifecycle = &config.lifecycle;
 
     let shutdown = Shutdown::new();
     if let Err(error) = shutdown.listen_for_signals() {
         tracing::error!(%error, "installing signal handlers failed");
-        flush(&telemetry);
-        return ExitStatus::Retryable.into();
+        return finish(
+            RunOutcome::completed(ExitStatus::Retryable),
+            lifecycle.flush_timeout(),
+            move || telemetry.shutdown(),
+        )
+        .await;
     }
 
     let listener = match TcpListener::bind(config.health_listen_address).await {
@@ -48,8 +57,12 @@ pub async fn launch<W: Worker + ?Sized>(
                 address = %config.health_listen_address,
                 "binding probe listener failed"
             );
-            flush(&telemetry);
-            return ExitStatus::Retryable.into();
+            return finish(
+                RunOutcome::completed(ExitStatus::Retryable),
+                lifecycle.flush_timeout(),
+                move || telemetry.shutdown(),
+            )
+            .await;
         }
     };
 
@@ -57,33 +70,28 @@ pub async fn launch<W: Worker + ?Sized>(
     let context = WorkerContext::new(shutdown.clone(), heartbeat.clone());
 
     let router = probes_router(&heartbeat, config.health_check_timeout(), shutdown.clone());
-    let server_shutdown = shutdown.clone();
-    let server = axum::serve(listener, router)
-        .with_graceful_shutdown(async move { server_shutdown.triggered().await })
-        .into_future();
+    let server = serve(listener, router, shutdown.clone(), lifecycle.drain_delay());
 
+    let name = worker.name();
     tracing::info!(
-        worker = worker.name(),
+        worker = name,
         address = %config.health_listen_address,
         "worker started"
     );
 
-    let status = supervise(worker, context, server).await;
+    let supervised = supervise(Arc::new(worker), context, server, lifecycle.deadline()).await;
 
     tracing::info!(
-        worker = worker.name(),
-        ?status,
-        code = status.code(),
+        worker = name,
+        status = ?supervised.outcome.status,
+        code = supervised.outcome.status.code(),
+        culprit = ?supervised.culprit,
+        deadline_exceeded = supervised.outcome.deadline_exceeded,
         "worker stopped"
     );
 
-    flush(&telemetry);
-
-    status.into()
-}
-
-fn flush(telemetry: &Telemetry) {
-    if let Err(error) = telemetry.shutdown() {
-        tracing::warn!(%error, "telemetry shutdown failed");
-    }
+    finish(supervised.outcome, lifecycle.flush_timeout(), move || {
+        telemetry.shutdown()
+    })
+    .await
 }

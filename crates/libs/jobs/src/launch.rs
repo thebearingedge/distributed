@@ -2,15 +2,19 @@
 
 use std::process::ExitCode;
 
+use runtime::config::LifecycleConfig;
 use runtime::exit_status::ExitStatus;
+use runtime::lifecycle::{RunOutcome, finish};
 use runtime::shutdown::Shutdown;
 use telemetry::Telemetry;
 
 use crate::job::Job;
 use crate::runner;
 
-/// Initializes telemetry, installs shutdown signal handlers, runs `job`, and
-/// maps the outcome to a process [`ExitCode`].
+/// Initializes telemetry, installs shutdown signal handlers (a second signal
+/// exits 143 immediately), runs `job` bounded by the shutdown deadline from
+/// `lifecycle`, and ends with a telemetry flush bounded by
+/// `lifecycle.flush_timeout()`. Returns the process [`ExitCode`].
 ///
 /// `service_name` is the default `service.name`, which `OTEL_SERVICE_NAME`
 /// overrides.
@@ -19,34 +23,38 @@ use crate::runner;
 ///
 /// Panics if called outside a multi-thread Tokio runtime or twice per process
 /// (see `telemetry::Telemetry::init`).
-pub async fn launch<J: Job + ?Sized>(service_name: &'static str, job: &J) -> ExitCode {
+pub async fn launch<J: Job + ?Sized>(
+    service_name: &'static str,
+    job: &J,
+    lifecycle: &LifecycleConfig,
+) -> ExitCode {
     let telemetry = Telemetry::init(service_name);
 
     let shutdown = Shutdown::new();
     if let Err(error) = shutdown.listen_for_signals() {
         tracing::error!(%error, "installing signal handlers failed");
-        flush(&telemetry);
-        return ExitStatus::Retryable.into();
+        return finish(
+            RunOutcome::completed(ExitStatus::Retryable),
+            lifecycle.flush_timeout(),
+            move || telemetry.shutdown(),
+        )
+        .await;
     }
 
     tracing::info!(job = job.name(), "job started");
 
-    let status = runner::run(job, shutdown).await;
+    let outcome = runner::run_within(job, shutdown, lifecycle.deadline()).await;
 
     tracing::info!(
         job = job.name(),
-        ?status,
-        code = status.code(),
+        status = ?outcome.status,
+        code = outcome.status.code(),
+        deadline_exceeded = outcome.deadline_exceeded,
         "job finished"
     );
 
-    flush(&telemetry);
-
-    status.into()
-}
-
-fn flush(telemetry: &Telemetry) {
-    if let Err(error) = telemetry.shutdown() {
-        tracing::warn!(%error, "telemetry shutdown failed");
-    }
+    finish(outcome, lifecycle.flush_timeout(), move || {
+        telemetry.shutdown()
+    })
+    .await
 }

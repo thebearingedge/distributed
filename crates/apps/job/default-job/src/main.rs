@@ -11,6 +11,6 @@ use jobs::NoopJob;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    Args::parse();
-    jobs::launch("default_job", &NoopJob).await
+    let args = Args::parse();
+    jobs::launch("default_job", &NoopJob, &args.lifecycle).await
 }

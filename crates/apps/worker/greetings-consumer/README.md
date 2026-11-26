@@ -6,7 +6,8 @@ blank greetings are logged, acked, and skipped, and a failed handler stops
 consumption without committing that message's offset, so it is redelivered on
 restart. It serves `/livez` and `/readyz` on port `3000` by default (env vars
 `HEALTH_LISTEN_ADDRESS`, `HEALTH_CHECK_TIMEOUT_SECONDS`,
-`HEARTBEAT_STALE_SECONDS`) and requires `KAFKA_CONSUMER_GROUP_ID` plus
+`HEARTBEAT_STALE_SECONDS`, `SHUTDOWN_DRAIN_SECONDS`, `SHUTDOWN_TIMEOUT_SECONDS`,
+`SHUTDOWN_FLUSH_TIMEOUT_SECONDS`) and requires `KAFKA_CONSUMER_GROUP_ID` plus
 `KAFKA_BOOTSTRAP_SERVERS` (`KAFKA_CLIENT_ID`,
 `KAFKA_CONSUMER_AUTO_OFFSET_RESET` optional); see
 [`crates/libs/kafka/README.md`](../../../libs/kafka/README.md) for the

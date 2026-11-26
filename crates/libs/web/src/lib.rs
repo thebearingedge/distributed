@@ -1,8 +1,9 @@
 //! Shared axum web plumbing: HTTP error bodies, schema-validated extractors,
 //! health-probe routing, tracing and metrics middleware, request guardrails
 //! (timeout, body limit, catch-panic), `OpenAPI` helpers, the runtime
-//! configuration for axum API binaries, and — under the `test-support`
-//! feature — oneshot HTTP test helpers.
+//! configuration for axum API binaries, the draining HTTP server
+//! ([`crate::server::serve`]), and — under the `test-support` feature —
+//! oneshot HTTP test helpers.
 
 /// HTTP error-response body types ([`crate::api_error::ErrorBody`],
 /// [`crate::api_error::ValidationErrorBody`]) and the
@@ -36,10 +37,6 @@ pub mod fallback;
 /// request-header extractor [`crate::extractors::OptionalHeader`].
 pub mod extractors;
 
-/// The [`crate::graceful_shutdown::graceful_shutdown`] drain future for axum
-/// servers, driven by [`runtime::shutdown::Shutdown`].
-pub mod graceful_shutdown;
-
 /// Request guardrails composite ([`crate::guardrails::with_guardrails`]).
 pub mod guardrails;
 
@@ -60,6 +57,10 @@ pub mod openapi;
 /// Request-ID middleware: generation, propagation, sanitization, and
 /// task-local access to the current request's ID.
 pub mod request_id;
+
+/// The axum HTTP server future driven by [`runtime::shutdown::Shutdown`]
+/// with a drain delay ([`crate::server::serve`]).
+pub mod server;
 
 /// Request timeout middleware ([`crate::timeout::with_request_timeout`]).
 pub mod timeout;
