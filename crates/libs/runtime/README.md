@@ -20,8 +20,10 @@ re-exports.
   classification; `exit_status` maps each variant to its [`ExitStatus`](#exit-codes)
   status.
 - [`Heartbeat`](src/heartbeat.rs) — liveness signal for long-running loops;
-  the loop calls `beat` at least every `interval`, and `check` fails once no
-  beat has landed within `stale_after`.
+  the loop calls `beat` at least every `interval`, `check` fails once no
+  beat has landed within `stale_after`, and `beat_while` keeps it fresh
+  while awaiting a future that can outlast `stale_after` (handlers,
+  deliveries).
 
 ## Exit codes
 

@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -98,13 +99,32 @@ impl Heartbeat {
     fn millis_since_origin(&self, now: Instant) -> u64 {
         u64::try_from(now.saturating_duration_since(self.0.origin).as_millis()).unwrap_or(u64::MAX)
     }
+
+    /// Keeps the heartbeat fresh while awaiting a long future: beats every
+    /// [`interval`](Self::interval) while `future` is pending, and once more
+    /// when it completes, then returns its output. Use it for awaits that can
+    /// outlast [`stale_after`](Self::stale_after), such as handlers or message
+    /// deliveries.
+    pub async fn beat_while<F: Future>(&self, future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let mut ticker = tokio::time::interval(self.interval());
+        loop {
+            tokio::select! {
+                output = &mut future => {
+                    self.beat();
+                    return output;
+                }
+                _ = ticker.tick() => self.beat(),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use tokio::time::advance;
+    use tokio::time::{advance, sleep};
 
     use super::*;
 
@@ -161,5 +181,26 @@ mod tests {
     #[should_panic(expected = "heartbeat stale_after must be non-zero")]
     fn zero_stale_after_panics() {
         let _ = Heartbeat::new(Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn beat_while_keeps_the_heartbeat_fresh_during_a_long_future() {
+        let heartbeat = Heartbeat::new(Duration::from_secs(30));
+        let task_heartbeat = heartbeat.clone();
+        let task = tokio::spawn(async move {
+            task_heartbeat
+                .beat_while(sleep(Duration::from_secs(120)))
+                .await;
+        });
+        sleep(Duration::from_secs(90)).await;
+        assert!(heartbeat.check().is_ok());
+        task.await.expect("beat_while task completes");
+        assert!(heartbeat.check().is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn beat_while_returns_the_future_output() {
+        let heartbeat = Heartbeat::new(Duration::from_secs(30));
+        assert_eq!(heartbeat.beat_while(async { 7 }).await, 7);
     }
 }

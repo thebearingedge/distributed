@@ -4,8 +4,9 @@ FROM rust:1-slim-bookworm
 RUN \
   apt-get update && \
   apt-get install -y --no-install-recommends \
-  gcc-x86-64-linux-gnu libc6-dev-amd64-cross \
-  gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+  cmake make \
+  gcc-x86-64-linux-gnu g++-x86-64-linux-gnu libc6-dev-amd64-cross \
+  gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross \
   && rm -rf /var/lib/apt/lists/*
 
 RUN rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
@@ -14,8 +15,10 @@ ENV \
   CARGO_HOME=/cargo-home \
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
   CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc \
+  CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ \
   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-  CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+  CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+  CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++
 
 COPY --chmod=755 <<'EOF' /usr/local/bin/rust-target
 #!/bin/sh

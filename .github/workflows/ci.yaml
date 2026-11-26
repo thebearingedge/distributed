@@ -53,6 +53,7 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: postgres://postgres:password@localhost:5432/postgres
+          KAFKA_BOOTSTRAP_SERVERS: 127.0.0.1:9092
         run: cargo test --workspace --locked
 
       - name: Show service logs
