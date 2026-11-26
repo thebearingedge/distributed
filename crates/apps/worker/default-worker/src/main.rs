@@ -12,5 +12,5 @@ use worker::InertWorker;
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
-    worker::launch("default_worker", &InertWorker, &args.worker).await
+    worker::launch("default_worker", InertWorker, &args.worker).await
 }

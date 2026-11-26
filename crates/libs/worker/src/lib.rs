@@ -2,8 +2,9 @@
 //! [`crate::Worker`] contract, its [`crate::WorkerConfig`], the
 //! [`crate::probes::probes_router()`] HTTP probe server (heartbeat-backed
 //! liveness, shutdown-aware readiness), the [`crate::supervisor::supervise()`]
-//! worker/server supervision, the [`crate::launch::launch()`] composition
-//! root, and the placeholder [`crate::InertWorker`].
+//! worker/server supervision on a [`runtime::supervisor::Supervisor`] with a
+//! shutdown deadline, the [`crate::launch::launch()`] composition root, and
+//! the placeholder [`crate::InertWorker`].
 
 /// Worker process configuration.
 pub mod config;
@@ -17,7 +18,8 @@ pub mod launch;
 /// The worker's liveness/readiness probe router.
 pub mod probes;
 
-/// Joint supervision of the worker and its probe server.
+/// Joint supervision of the worker and its probe server on a
+/// [`runtime::supervisor::Supervisor`], with a shutdown deadline.
 pub mod supervisor;
 
 /// The worker contract and its run context.

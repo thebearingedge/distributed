@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use axum::http::HeaderValue;
 
+use runtime::config::LifecycleConfig;
+
 use crate::cors::{ParseOriginsError, parse_allowed_origins};
 use crate::guardrails::GuardrailsConfig;
 
@@ -13,22 +15,23 @@ pub const REQUEST_TIMEOUT_DEFAULT_SECONDS: u64 = 30;
 /// Default for [`crate::config::ApiConfig::request_body_limit_bytes`] (1 MiB).
 pub const REQUEST_BODY_LIMIT_DEFAULT_BYTES: usize = 1_048_576;
 
-/// Runtime configuration for an axum API binary: listener address, drain
-/// delay, readiness timeout, CORS origins, request timeout, and request
-/// body limit. CLI args fall back to env vars, which fall back to declared
-/// defaults.
+/// Runtime configuration for an axum API binary: listener address, process
+/// lifecycle configuration, health-check timeout, CORS origins, request
+/// timeout, and request body limit. CLI args fall back to env vars, which
+/// fall back to declared defaults.
 #[derive(Debug, clap::Parser)]
 pub struct ApiConfig {
     /// Address and port to bind the listener to.
     #[arg(long, env = "LISTEN_ADDRESS", default_value = "0.0.0.0:3000")]
     pub listen_address: SocketAddr,
-    /// Seconds to keep draining in-flight requests after the shutdown
-    /// signal before the server stops.
-    #[arg(long, env = "SHUTDOWN_DRAIN_SECONDS", default_value_t = 0)]
-    pub shutdown_drain_seconds: u64,
-    /// Seconds allowed for readiness probes to complete.
-    #[arg(long, env = "READINESS_TIMEOUT_SECONDS", default_value_t = 2)]
-    pub readiness_timeout_seconds: u64,
+    /// Process lifecycle configuration: drain delay, shutdown deadline,
+    /// and final flush budget.
+    #[command(flatten)]
+    pub lifecycle: LifecycleConfig,
+    /// Seconds each liveness or readiness check may take before it counts
+    /// as failed.
+    #[arg(long, env = "HEALTH_CHECK_TIMEOUT_SECONDS", default_value_t = 2)]
+    pub health_check_timeout_seconds: u64,
     /// Comma-separated exact origins allowed to make cross-origin
     /// requests; unset or empty means CORS is off.
     #[arg(long, env = "CORS_ALLOWED_ORIGINS")]
@@ -44,16 +47,11 @@ pub struct ApiConfig {
 }
 
 impl ApiConfig {
-    /// Time to keep draining in-flight requests after the shutdown signal.
+    /// Time each liveness or readiness check may take before it counts as
+    /// failed.
     #[must_use]
-    pub fn drain_delay(&self) -> Duration {
-        Duration::from_secs(self.shutdown_drain_seconds)
-    }
-
-    /// Time allowed for readiness probes to complete.
-    #[must_use]
-    pub fn readiness_timeout(&self) -> Duration {
-        Duration::from_secs(self.readiness_timeout_seconds)
+    pub fn health_check_timeout(&self) -> Duration {
+        Duration::from_secs(self.health_check_timeout_seconds)
     }
 
     /// Time a request may take to produce a response before it is answered
@@ -107,8 +105,10 @@ mod tests {
     fn defaults_apply_when_no_args_or_env() {
         let config = ApiConfig::try_parse_from(["todos-api"]).unwrap();
         assert_eq!(config.listen_address.to_string(), "0.0.0.0:3000");
-        assert_eq!(config.shutdown_drain_seconds, 0);
-        assert_eq!(config.readiness_timeout_seconds, 2);
+        assert_eq!(config.health_check_timeout_seconds, 2);
+        assert_eq!(config.lifecycle.shutdown_drain_seconds, 0);
+        assert_eq!(config.lifecycle.shutdown_timeout_seconds, 20);
+        assert_eq!(config.lifecycle.shutdown_flush_timeout_seconds, 5);
         assert_eq!(config.cors_allowed_origins, None);
         assert_eq!(config.request_timeout_seconds, 30);
         assert_eq!(config.request_body_limit_bytes, 1_048_576);
@@ -158,7 +158,9 @@ mod tests {
             "127.0.0.1:8080",
             "--shutdown-drain-seconds",
             "3",
-            "--readiness-timeout-seconds",
+            "--shutdown-timeout-seconds",
+            "12",
+            "--health-check-timeout-seconds",
             "4",
             "--cors-allowed-origins",
             "http://a",
@@ -169,8 +171,9 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(args.api.listen_address.to_string(), "127.0.0.1:8080");
-        assert_eq!(args.api.shutdown_drain_seconds, 3);
-        assert_eq!(args.api.readiness_timeout_seconds, 4);
+        assert_eq!(args.api.lifecycle.shutdown_drain_seconds, 3);
+        assert_eq!(args.api.lifecycle.shutdown_timeout_seconds, 12);
+        assert_eq!(args.api.health_check_timeout_seconds, 4);
         assert_eq!(args.api.cors_allowed_origins.as_deref(), Some("http://a"));
         assert_eq!(args.api.request_timeout_seconds, 9);
         assert_eq!(args.api.request_body_limit_bytes, 2048);
@@ -180,17 +183,27 @@ mod tests {
     fn accessors_convert_seconds_to_durations() {
         let config = ApiConfig::try_parse_from([
             "todos-api",
-            "--shutdown-drain-seconds",
-            "5",
-            "--readiness-timeout-seconds",
+            "--health-check-timeout-seconds",
             "7",
             "--request-timeout-seconds",
             "11",
         ])
         .unwrap();
-        assert_eq!(config.drain_delay(), Duration::from_secs(5));
-        assert_eq!(config.readiness_timeout(), Duration::from_secs(7));
+        assert_eq!(config.health_check_timeout(), Duration::from_secs(7));
         assert_eq!(config.request_timeout(), Duration::from_secs(11));
+    }
+
+    #[test]
+    fn lifecycle_flags_flatten_without_id_collisions() {
+        let config = ApiConfig::try_parse_from([
+            "todos-api",
+            "--shutdown-drain-seconds",
+            "1",
+            "--shutdown-flush-timeout-seconds",
+            "3",
+        ])
+        .unwrap();
+        assert_eq!(config.lifecycle.deadline(), Duration::from_secs(21));
     }
 
     #[test]

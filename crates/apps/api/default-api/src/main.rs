@@ -2,22 +2,29 @@
 
 mod config;
 
+use std::process::ExitCode;
+
 use anyhow::Context;
-use axum::{Router, http::StatusCode, routing::get, serve};
+use axum::{Router, http::StatusCode, routing::get};
 use clap::Parser;
 use tokio::net::TcpListener;
 
 use config::Args;
+use runtime::lifecycle::finish;
 use runtime::shutdown::Shutdown;
+use runtime::supervisor::Supervisor;
 use telemetry::Telemetry;
 use web::{
-    graceful_shutdown::graceful_shutdown, guardrails::with_guardrails, health,
+    guardrails::with_guardrails,
+    health,
     metrics::with_http_metrics,
+    server::{self, HTTP_SERVER_TASK},
 };
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<ExitCode> {
     let args = Args::parse();
+    let lifecycle = &args.api.lifecycle;
 
     let telemetry = Telemetry::init("default_api");
 
@@ -38,22 +45,33 @@ async fn main() -> anyhow::Result<()> {
         ),
         telemetry.meter_provider(),
     )
-    .merge(health::HealthRouter::new(args.api.readiness_timeout(), shutdown.clone()).into_router());
+    .merge(
+        health::HealthRouter::new(args.api.health_check_timeout(), shutdown.clone()).into_router(),
+    );
 
     shutdown
         .listen_for_signals()
         .context("installing signal handlers")?;
 
-    let shutdown_server = serve(listener, router)
-        .with_graceful_shutdown(graceful_shutdown(shutdown, args.api.drain_delay()))
-        .await;
+    let mut supervisor = Supervisor::new(shutdown.clone());
+    supervisor.spawn(
+        HTTP_SERVER_TASK,
+        server::serve(listener, router, shutdown, lifecycle.drain_delay()),
+    );
+    let supervised = supervisor.run(lifecycle.deadline()).await;
 
-    tracing::info!("server stopped. cleaning up...");
+    tracing::info!(
+        status = ?supervised.outcome.status,
+        code = supervised.outcome.status.code(),
+        culprit = ?supervised.culprit,
+        deadline_exceeded = supervised.outcome.deadline_exceeded,
+        "server stopped. cleaning up..."
+    );
 
-    let shutdown_telemetry = telemetry.shutdown();
-
-    shutdown_server?;
-    shutdown_telemetry?;
-
-    Ok(())
+    Ok(
+        finish(supervised.outcome, lifecycle.flush_timeout(), move || {
+            telemetry.shutdown()
+        })
+        .await,
+    )
 }

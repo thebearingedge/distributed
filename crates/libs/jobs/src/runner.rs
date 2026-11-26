@@ -1,7 +1,11 @@
 //! Runs a job and maps its outcome to an exit status.
 
+use std::time::Duration;
+
 use crate::job::Job;
+use runtime::deadline::within_deadline;
 use runtime::exit_status::ExitStatus;
+use runtime::lifecycle::RunOutcome;
 use runtime::shutdown::Shutdown;
 
 /// Runs `job` until it finishes or `shutdown` is triggered, and maps the
@@ -31,15 +35,36 @@ pub async fn run<J: Job + ?Sized>(job: &J, shutdown: Shutdown) -> ExitStatus {
     }
 }
 
+/// Runs `job` like [`crate::runner::run`], bounded by the shutdown deadline:
+/// once `shutdown` is triggered, the job has `deadline` to return. If it does
+/// not, it is dropped and the outcome is
+/// [`runtime::exit_status::ExitStatus::Interrupted`] with `deadline_exceeded`
+/// set. Before the trigger, the job may run for any length of time.
+pub async fn run_within<J: Job + ?Sized>(
+    job: &J,
+    shutdown: Shutdown,
+    deadline: Duration,
+) -> RunOutcome {
+    match within_deadline(&shutdown, deadline, run(job, shutdown.clone())).await {
+        Ok(status) => RunOutcome::completed(status),
+        Err(exceeded) => {
+            tracing::warn!(job = job.name(), %exceeded, "job did not stop before the shutdown deadline");
+            RunOutcome::abandoned(ExitStatus::Interrupted)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::future::pending;
     use std::time::Duration;
 
     use async_trait::async_trait;
-    use tokio::time::timeout;
+    use tokio::time::{Instant, timeout};
 
-    use super::{Job, run};
+    use super::{Job, run, run_within};
     use runtime::exit_status::ExitStatus;
+    use runtime::lifecycle::RunOutcome;
     use runtime::run_error::RunError;
     use runtime::shutdown::Shutdown;
 
@@ -99,6 +124,33 @@ mod tests {
         async fn run(&self, shutdown: Shutdown) -> Result<(), RunError> {
             shutdown.triggered().await;
             Ok(())
+        }
+    }
+
+    struct SleepsThenSucceeds;
+
+    #[async_trait]
+    impl Job for SleepsThenSucceeds {
+        fn name(&self) -> &'static str {
+            "sleeps_then_succeeds"
+        }
+
+        async fn run(&self, _shutdown: Shutdown) -> Result<(), RunError> {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Ok(())
+        }
+    }
+
+    struct IgnoresShutdown;
+
+    #[async_trait]
+    impl Job for IgnoresShutdown {
+        fn name(&self) -> &'static str {
+            "ignores_shutdown"
+        }
+
+        async fn run(&self, _shutdown: Shutdown) -> Result<(), RunError> {
+            pending::<Result<(), RunError>>().await
         }
     }
 
@@ -176,5 +228,42 @@ mod tests {
             .expect("the run finishes once shutdown is triggered")
             .expect("the spawned run does not panic");
         assert_eq!(status, ExitStatus::Interrupted);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_within_completes_like_run() {
+        let outcome = run_within(&Succeeds, Shutdown::new(), Duration::from_secs(1)).await;
+
+        assert_eq!(outcome, RunOutcome::completed(ExitStatus::Success));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_within_does_not_bound_an_untriggered_job() {
+        let outcome =
+            run_within(&SleepsThenSucceeds, Shutdown::new(), Duration::from_secs(1)).await;
+
+        assert_eq!(outcome, RunOutcome::completed(ExitStatus::Success));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_within_keeps_the_interrupted_classification() {
+        let shutdown = Shutdown::new();
+        shutdown.trigger();
+
+        let outcome = run_within(&FailsOnShutdown, shutdown, Duration::from_secs(5)).await;
+
+        assert_eq!(outcome, RunOutcome::completed(ExitStatus::Interrupted));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_within_abandons_a_job_ignoring_shutdown() {
+        let shutdown = Shutdown::new();
+        shutdown.trigger();
+        let started = Instant::now();
+
+        let outcome = run_within(&IgnoresShutdown, shutdown, Duration::from_secs(5)).await;
+
+        assert_eq!(outcome, RunOutcome::abandoned(ExitStatus::Interrupted));
+        assert_eq!(started.elapsed(), Duration::from_secs(5));
     }
 }

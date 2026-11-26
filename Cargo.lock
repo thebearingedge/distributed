@@ -593,6 +593,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jobs",
+ "runtime",
  "tokio",
 ]
 
@@ -2295,6 +2296,7 @@ dependencies = [
 name = "runtime"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "thiserror",
  "tokio",
  "tokio-util",

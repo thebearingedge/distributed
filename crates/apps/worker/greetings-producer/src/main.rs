@@ -16,5 +16,5 @@ async fn main() -> ExitCode {
     let interval = args.greeting_interval();
     let worker =
         GreetingsProducerWorker::new(args.kafka, args.producer, interval, args.greeting_message);
-    worker::launch("greetings_producer", &worker, &args.worker).await
+    worker::launch("greetings_producer", worker, &args.worker).await
 }
