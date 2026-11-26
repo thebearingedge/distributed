@@ -29,48 +29,50 @@ services:
       postgres:
         condition: service_healthy
 
-  openssl:
-    image: docker.io/alpine/openssl:3.5.9
-    volumes:
-      - ./openssl/generate-certs.sh:/tmp/generate-certs.sh:ro
-      - ./openssl/certs:/tmp/certs
-    entrypoint: /tmp/generate-certs.sh
-
   kafka:
     image: docker.io/apache/kafka:4.4.0
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9094
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENERS: HOST://:9093,INTERNAL://:9092,CONTROLLER://:9094
-      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9093,INTERNAL://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: HOST:SSL,INTERNAL:SSL,CONTROLLER:PLAINTEXT
+      KAFKA_LISTENERS: HOST://:9092,INTERNAL://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://127.0.0.1:9092,INTERNAL://kafka:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: HOST:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_SSL_KEYSTORE_TYPE: PEM
-      KAFKA_SSL_KEYSTORE_LOCATION: /tmp/certs/broker-keystore.pem
-      KAFKA_SSL_TRUSTSTORE_TYPE: PEM
-      KAFKA_SSL_TRUSTSTORE_LOCATION: /tmp/certs/ca.pem
-      KAFKA_SSL_CLIENT_AUTH: required
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     tmpfs: /var/lib/kafka/data:uid=1000,gid=1000,mode=0755
-    volumes:
-      - ./openssl/certs:/tmp/certs:ro
     ports:
-      - 127.0.0.1:9093:9093
+      - 127.0.0.1:9092:9092
     healthcheck:
-      test: nc -z localhost 9093 || exit 1
+      test: nc -z localhost 9092 || exit 1
       start_period: 5s
       interval: 5s
       retries: 10
       timeout: 5s
+
+  kafka-init:
+    image: docker.io/apache/kafka:4.4.0
+    environment:
+      KAFKA_TOPICS: greetings
+      KAFKA_TOPIC_PARTITIONS: 3
+    volumes:
+      - ./kafka-init/create-topics.sh:/tmp/create-topics.sh:ro
+    entrypoint: /tmp/create-topics.sh
+    healthcheck:
+      test: test -f /tmp/topics-created
+      start_period: 5s
+      interval: 1s
+      retries: 30
+      timeout: 5s
     depends_on:
-      openssl:
-        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
 
   rustfs:
     build:

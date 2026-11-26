@@ -13,7 +13,8 @@ pub mod bootstrap;
 /// [`crate::metrics::InFlightGuard`] for in-flight work.
 pub mod metrics;
 
-/// Trace-context propagation between HTTP headers and [`tracing`] spans.
+/// Trace-context propagation between any text-map carrier and [`tracing`]
+/// spans, with [`HeaderMap`](http::HeaderMap) helpers for HTTP.
 pub mod propagation;
 
 /// OTLP tracer/meter provider building blocks and the one-shot global

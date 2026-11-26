@@ -9,6 +9,7 @@ publish = false
 
 [workspace.dependencies]
 todos = { path = "crates/domains/todos" }
+greetings = { path = "crates/domains/greetings" }
 database = { path = "crates/libs/database" }
 telemetry = { path = "crates/libs/telemetry" }
 storage = { path = "crates/libs/storage" }
@@ -16,7 +17,9 @@ utils = { path = "crates/libs/utils" }
 web = { path = "crates/libs/web" }
 jobs = { path = "crates/libs/jobs" }
 runtime = { path = "crates/libs/runtime" }
+messaging = { path = "crates/libs/messaging" }
 worker = { path = "crates/libs/worker" }
+kafka = { path = "crates/libs/kafka" }
 
 aide = { version = "0.15.1", features = ["axum", "axum-json", "axum-query"] }
 anyhow = "1.0.104"
@@ -39,6 +42,12 @@ opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.33.1", features = [
   "grpc-tonic",
   "trace",
+] }
+rdkafka = { version = "0.40.0", default-features = false, features = [
+  "cmake-build",
+  "libz-static",
+  "tokio",
+  "tracing",
 ] }
 schemars = { version = "0.9", features = [
   "uuid1",

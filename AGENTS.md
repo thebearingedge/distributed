@@ -4,11 +4,11 @@
 
 `distributed` is a monorepo for distributed systems. Backend code is currently Rust — an edition 2024 workspace organized with Clean Architecture layering; Go and JavaScript may be introduced later. Three layers with dependency direction apps → domains → libs:
 
-- `crates/apps/` — deployables, at `crates/apps/<category>/<app>`: `api/default-api` (placeholder API), `api/todos-api` (axum HTTP API), `worker/default-worker` (placeholder worker), `job/default-job` (placeholder Kubernetes Job), `cli/ops-cli`
-- `crates/domains/` — business logic (e.g. `todos`): use_cases define repository ports, infrastructure implements them (sqlx + sea-query), migrations live in `crates/domains/<domain>/migrations`
-- `crates/libs/` — shared libraries: `web`, `database`, `storage`, `telemetry`, `utils`, `runtime` (process lifecycle: shutdown, exit statuses, heartbeat), `worker` (worker trait, probes, supervision), `jobs` (job trait and runner)
+- `crates/apps/` — deployables, at `crates/apps/<category>/<app>`: `api/default-api` (placeholder API), `api/todos-api` (axum HTTP API), `worker/default-worker` (placeholder worker), `worker/greetings-producer` and `worker/greetings-consumer` (example Kafka producer and consumer workers), `job/default-job` (placeholder Kubernetes Job), `cli/ops-cli`
+- `crates/domains/` — business logic (e.g. `todos`, and `greetings` as the Kafka example domain): use_cases define ports, infrastructure implements them with sqlx and sea-query, or with Kafka adapters, and migrations live in `crates/domains/<domain>/migrations` where a domain has them
+- `crates/libs/` — shared libraries: `web`, `database`, `storage`, `messaging` (broker-neutral messaging error taxonomy), `kafka` (typed JSON Kafka producer and consumer on rdkafka), `telemetry`, `utils`, `runtime` (process lifecycle: shutdown, exit statuses, heartbeat), `worker` (worker trait, probes, supervision), `jobs` (job trait and runner)
 
-Stack: axum, sqlx (Postgres), sea-query, opentelemetry, tracing, thiserror.
+Stack: axum, sqlx (Postgres), sea-query, opentelemetry, tracing, rdkafka (Kafka), thiserror.
 
 ## Hard rules
 
@@ -33,7 +33,7 @@ Tooling is managed via `direnv` (`.envrc` sets `CARGO_INSTALL_ROOT=tools/cargo` 
 | Test one crate | `just cargo-test <crate>` |
 | Test all | `just cargo-test-all` |
 | Coverage | `just cargo-cover` (HTML + lcov in `coverage/`) |
-| Run an app with hot reload | `just cargo-run <app> [args]` — valid `<app>` names are the crate names found in `crates/apps/**/Cargo.toml` (currently `default-api`, `todos-api`, `default-worker`, `default-job`, `ops-cli`) |
+| Run an app with hot reload | `just cargo-run <app> [args]` — valid `<app>` names are the crate names found in `crates/apps/**/Cargo.toml` (currently `default-api`, `todos-api`, `default-worker`, `greetings-producer`, `greetings-consumer`, `default-job`, `ops-cli`) |
 | TDD loop | `just cargo-tdd <crate>` |
 | Migrations | `just migrate <domain> <action>` — the action passes through to `sqlx migrate` (`add` to create, `run` to apply, `revert` to undo, `revert --target-version 0` to revert all) |
 | Postgres shell | `just psql <database>` |
@@ -47,6 +47,8 @@ Tooling is managed via `direnv` (`.envrc` sets `CARGO_INSTALL_ROOT=tools/cargo` 
 
 - **postgres** (18, tmpfs storage) on `127.0.0.1:5432` — dev credentials only, not secrets
 - **pgweb** UI on `127.0.0.1:8081`
+- **kafka** (Apache Kafka 4.4, PLAINTEXT) on `127.0.0.1:9092` (compose-internal `kafka:19092`) — broker auto-create is off; in-cluster transport security comes from Cilium mutual authentication, so clients use PLAINTEXT
+- **kafka-init** provisions topics from `infrastructure/kafka-init/create-topics.sh` (`greetings`, 3 partitions) and stays up with a readiness healthcheck, so `up --wait` blocks until topics exist
 - **opentelemetry-collector** on `4317`/`4318` (gRPC/HTTP)
 
 Tests require the compose services running: `just infrastructure up -d --wait`.

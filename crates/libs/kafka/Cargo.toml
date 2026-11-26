@@ -1,0 +1,27 @@
+[package]
+name = "kafka"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+messaging.workspace = true
+runtime.workspace = true
+telemetry.workspace = true
+
+async-trait.workspace = true
+clap.workspace = true
+opentelemetry.workspace = true
+rdkafka.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+opentelemetry_sdk.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

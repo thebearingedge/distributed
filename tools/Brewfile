@@ -1,3 +1,5 @@
+# Cross-platform build system generator (builds librdkafka)
+brew "cmake"
 # Load/unload environment variables based on $PWD
 brew "direnv"
 # GitHub command-line tool
