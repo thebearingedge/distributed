@@ -19,6 +19,10 @@ migrate domain action='run' *args:
 psql database:
   docker compose -f infrastructure/docker-compose.yaml exec -it postgres psql -U postgres -d {{database}}
 
+docker-build app *args:
+  ls crates/apps/*/{{app}}/Cargo.toml >/dev/null 2>&1 || { echo "unknown app: {{app}}" >&2; exit 1; }; \
+  docker build -f tools/docker/Dockerfile.rust-app --build-arg APPLICATION={{app}} -t {{app}}:dev {{args}} .
+
 cargo-lint crate='':
   cargo clippy {{ if crate == '' { '--workspace' } else { '-p ' + crate } }} --all-targets -- -D warnings
 

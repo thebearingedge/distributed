@@ -35,15 +35,16 @@ pub mod fallback;
 /// [`crate::extractors::ValidatedPath`], and the configurable optional
 /// request-header extractor [`crate::extractors::OptionalHeader`].
 pub mod extractors;
-/// Drain flag ([`crate::graceful_shutdown::Draining`]), the
-/// [`crate::graceful_shutdown::graceful_shutdown`] future, and platform
-/// shutdown-signal handling ([`crate::graceful_shutdown::shutdown_signal`]).
+
+/// The [`crate::graceful_shutdown::graceful_shutdown`] drain future for axum
+/// servers, driven by [`runtime::shutdown::Shutdown`].
 pub mod graceful_shutdown;
 
 /// Request guardrails composite ([`crate::guardrails::with_guardrails`]).
 pub mod guardrails;
 
-/// Liveness (`/livez`) and readiness (`/readyz`) probe router.
+/// Liveness (`/livez`) and readiness (`/readyz`) probe router
+/// ([`crate::health::HealthRouter`]).
 pub mod health;
 
 /// OpenTelemetry-convention request tracing middleware.

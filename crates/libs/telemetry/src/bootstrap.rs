@@ -21,6 +21,10 @@ impl Telemetry {
     /// propagator ([`crate::provider::init_subscriber`]) and the global meter
     /// provider.
     ///
+    /// `service_name` is the compiled-in default; `OTEL_SERVICE_NAME`, when
+    /// set and non-empty, overrides it. Other `OTEL_RESOURCE_ATTRIBUTES` keys
+    /// are still applied.
+    ///
     /// Call it once, from within a Tokio runtime, before creating any meters.
     ///
     /// # Panics

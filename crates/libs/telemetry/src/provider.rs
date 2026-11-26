@@ -1,4 +1,4 @@
-use opentelemetry::{global, trace::TracerProvider};
+use opentelemetry::{Value, global, trace::TracerProvider};
 use opentelemetry_otlp::{MetricExporter, SpanExporter};
 use opentelemetry_sdk::{
     Resource, metrics::SdkMeterProvider, propagation::TraceContextPropagator,
@@ -10,16 +10,37 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 /// Log level used when `RUST_LOG` is unset or unparseable.
 const DEFAULT_FILTER_LEVEL: &str = "info";
 
+/// The `OTEL_SERVICE_NAME` environment variable, whose value, when set and
+/// non-empty, overrides `default_service_name` in [`resource`].
+const OTEL_SERVICE_NAME: &str = "OTEL_SERVICE_NAME";
+
+/// Resolves the `service.name` value: the environment override when it is set
+/// and non-empty, otherwise `default_service_name`.
+fn service_name(from_env: Option<String>, default_service_name: &'static str) -> Value {
+    from_env
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| Value::from(default_service_name), Value::from)
+}
+
 /// The OpenTelemetry resource identifying the service, combined with the
 /// SDK's default resource detectors.
+///
+/// `service.name` is `default_service_name`, unless `OTEL_SERVICE_NAME` is set
+/// and non-empty, in which case its value overrides it. Other attributes from
+/// `OTEL_RESOURCE_ATTRIBUTES` are still applied by the SDK's detectors.
 ///
 /// Build one resource and share it between
 /// [`crate::provider::tracer_provider`] and
 /// [`crate::provider::meter_provider`], so spans and metrics report the same
 /// `service.name`.
 #[must_use]
-pub fn resource(service_name: &'static str) -> Resource {
-    Resource::builder().with_service_name(service_name).build()
+pub fn resource(default_service_name: &'static str) -> Resource {
+    Resource::builder()
+        .with_service_name(service_name(
+            std::env::var(OTEL_SERVICE_NAME).ok(),
+            default_service_name,
+        ))
+        .build()
 }
 
 /// Builds an OTLP gRPC batch-exporting tracer provider and installs no global
@@ -108,10 +129,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn service_name_prefers_a_non_empty_override() {
+        assert_eq!(
+            service_name(Some("from_env".into()), "svc"),
+            Value::from("from_env")
+        );
+    }
+
+    #[test]
+    fn service_name_falls_back_when_the_override_is_unset() {
+        assert_eq!(service_name(None, "svc"), Value::from("svc"));
+    }
+
+    #[test]
+    fn service_name_falls_back_when_the_override_is_empty() {
+        assert_eq!(service_name(Some(String::new()), "svc"), Value::from("svc"));
+    }
+
+    #[test]
     fn resource_carries_the_service_name() {
         assert_eq!(
             resource("svc").get(&Key::from_static_str("service.name")),
-            Some(Value::from("svc"))
+            Some(service_name(std::env::var("OTEL_SERVICE_NAME").ok(), "svc"))
         );
     }
 }

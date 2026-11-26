@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 database.workspace = true
+runtime.workspace = true
 storage.workspace = true
 telemetry.workspace = true
 todos.workspace = true
