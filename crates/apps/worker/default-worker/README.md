@@ -1,6 +1,10 @@
 # default-worker
 
-A placeholder worker image: it runs the inert worker, which heartbeats so
+A placeholder worker image: the app value is
+[`InertWorker`](src/inert_worker.rs), defined in the
+crate's lib target (`default_worker`); `src/main.rs` only parses its args and
+calls `worker::launch("default_worker", InertWorker, &args.worker)`. The inert
+worker heartbeats so
 `/livez` stays `200`, serves `/readyz` (which flips to `503` once SIGTERM
 arrives), and exits `0` on a clean shutdown — reserving the default
 Kubernetes worker Deployment slot (port `3000`; env vars

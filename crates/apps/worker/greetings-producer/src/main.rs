@@ -1,14 +1,13 @@
 //! greetings-producer application binary.
 
 mod config;
-mod greetings_producer_worker;
 
 use std::process::ExitCode;
 
 use clap::Parser;
 
 use config::Args;
-use greetings_producer_worker::GreetingsProducerWorker;
+use greetings_producer::GreetingsProducerWorker;
 
 #[tokio::main]
 async fn main() -> ExitCode {

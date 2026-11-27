@@ -1,6 +1,5 @@
-//! The route paths of the todos API, shared by the router in
-//! [`api`](crate::api) and the `Location` header of the create response in
-//! [`controller`](crate::controller).
+//! The route paths of the todos API, shared by the router in [`api`] and the
+//! `Location` header of the create response in [`controller`].
 
 /// The todos collection path: the `POST` create route and the `GET` list
 /// route.

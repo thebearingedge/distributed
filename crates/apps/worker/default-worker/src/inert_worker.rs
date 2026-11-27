@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use runtime::run_error::RunError;
 
-use crate::worker::{Worker, WorkerContext};
+use worker::{Worker, WorkerContext};
 
 /// A placeholder worker that does no work: it heartbeats on schedule and
 /// returns once shutdown is triggered.
@@ -37,7 +37,7 @@ mod tests {
     use runtime::heartbeat::Heartbeat;
     use runtime::shutdown::Shutdown;
 
-    use crate::worker::{Worker, WorkerContext};
+    use worker::{Worker, WorkerContext};
 
     use super::InertWorker;
 

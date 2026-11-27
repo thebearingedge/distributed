@@ -1,53 +1,10 @@
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use futures_util::future::join_all;
+use runtime::health::HealthCheck;
 use runtime::shutdown::Shutdown;
 use serde::Serialize;
-
-/// The result type of a health check: errors are erased to a `String`
-/// message here so the generic router can log and report them without
-/// knowing the underlying error types.
-type CheckFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
-
-/// A named health check (readiness or liveness; e.g. "database") wrapping an
-/// arbitrary async fallible closure. Checks are only ever asked to succeed or
-/// fail; the error message is surfaced via logs, not the response body.
-#[derive(Clone)]
-pub struct HealthCheck {
-    name: &'static str,
-    run: Arc<dyn Fn() -> CheckFuture + Send + Sync>,
-}
-
-impl HealthCheck {
-    /// Creates a check from a closure producing a fallible future.
-    pub fn new<F, Fut, E>(name: &'static str, check: F) -> Self
-    where
-        F: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<(), E>> + Send + 'static,
-        E: std::fmt::Display,
-    {
-        Self {
-            name,
-            run: Arc::new(move || {
-                let fut = check();
-                Box::pin(async move { fut.await.map_err(|e| e.to_string()) })
-            }),
-        }
-    }
-
-    /// Creates a check whose closure captures a cloned resource (e.g. a
-    /// database pool), cloning it anew for each probe.
-    pub fn with_resource<R, F, Fut, E>(name: &'static str, resource: R, check: F) -> Self
-    where
-        R: Clone + Send + Sync + 'static,
-        F: Fn(R) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<(), E>> + Send + 'static,
-        E: std::fmt::Display,
-    {
-        Self::new(name, move || check(resource.clone()))
-    }
-}
 
 #[derive(Clone)]
 struct HealthState {
@@ -123,16 +80,18 @@ struct Liveness {
 ///
 /// Exposes two routes:
 ///
-/// - `/livez` — liveness; runs every liveness [`HealthCheck`] concurrently,
-///   each bounded by `timeout`, and ignores the shutdown state because a
-///   draining process is still alive. Returns `200 OK` with
+/// - `/livez` — liveness; runs every liveness
+///   [`runtime::health::HealthCheck`] concurrently, each bounded by
+///   `timeout`, and ignores the shutdown state because a draining process is
+///   still alive. Returns `200 OK` with
 ///   `{"status": "ok", "checks": {...}}` when every check passes (including
 ///   when there are none), or `503` with `{"status": "unavailable", ...}`
 ///   and a per-check `ok`/`failed` map (timed-out checks report `"failed"`)
 ///   when any check fails.
 /// - `/readyz` — readiness; once the shutdown is triggered, returns `503`
 ///   with `{"status": "shutting_down", "checks": {}}` and skips the checks
-///   entirely. Otherwise it runs every readiness [`HealthCheck`] as above.
+///   entirely. Otherwise it runs every readiness
+///   [`runtime::health::HealthCheck`] as above.
 #[derive(Clone)]
 pub struct HealthRouter {
     readiness: Vec<HealthCheck>,
@@ -223,11 +182,11 @@ async fn run_checks(
     probe: Probe,
 ) -> BTreeMap<&'static str, CheckStatus> {
     let outcomes = join_all(checks.iter().map(|check| async move {
-        let result = match tokio::time::timeout(timeout, (check.run)()).await {
+        let result = match tokio::time::timeout(timeout, check.run()).await {
             Ok(result) => result,
             Err(_) => Err("timed out".to_owned()),
         };
-        (check.name, result)
+        (check.name(), result)
     }))
     .await;
 

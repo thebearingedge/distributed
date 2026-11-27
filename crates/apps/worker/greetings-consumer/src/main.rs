@@ -1,14 +1,13 @@
 //! greetings-consumer application binary.
 
 mod config;
-mod greetings_consumer_worker;
 
 use std::process::ExitCode;
 
 use clap::Parser;
 
 use config::Args;
-use greetings_consumer_worker::GreetingsConsumerWorker;
+use greetings_consumer::GreetingsConsumerWorker;
 
 #[tokio::main]
 async fn main() -> ExitCode {

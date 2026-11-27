@@ -10,7 +10,7 @@ use worker::{Worker, WorkerContext};
 
 /// Consumes greetings until shutdown.
 #[derive(Debug)]
-pub(crate) struct GreetingsConsumerWorker {
+pub struct GreetingsConsumerWorker {
     kafka: KafkaConfig,
     consumer: KafkaConsumerConfig,
 }
@@ -18,7 +18,7 @@ pub(crate) struct GreetingsConsumerWorker {
 impl GreetingsConsumerWorker {
     /// Creates the worker from the Kafka and consumer configuration.
     #[must_use]
-    pub(crate) fn new(kafka: KafkaConfig, consumer: KafkaConsumerConfig) -> Self {
+    pub fn new(kafka: KafkaConfig, consumer: KafkaConsumerConfig) -> Self {
         Self { kafka, consumer }
     }
 }

@@ -1,6 +1,10 @@
 # greetings-consumer
 
-A worker that consumes greetings from the `greetings` Kafka topic with
+The app value is
+[`GreetingsConsumerWorker`](src/greetings_consumer_worker.rs), defined in the
+crate's lib target (`greetings_consumer`); `src/main.rs` only parses its args and calls
+`worker::launch("greetings_consumer", worker, &args.worker)`. It consumes
+greetings from the `greetings` Kafka topic with
 at-least-once delivery — each message is committed after its handler runs,
 blank greetings are logged, acked, and skipped, and a failed handler stops
 consumption without committing that message's offset, so it is redelivered on

@@ -112,7 +112,7 @@ impl HeaderConfig for IdempotencyKeyHeader {
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] as a `400 Bad Request` if the task is empty (an
+/// Returns `AppError` as a `400 Bad Request` if the task is empty (an
 /// invalid `Idempotency-Key` header is rejected by the [`OptionalHeader`]
 /// extractor instead), as a `409 Conflict` if the
 /// key is still held by an unfinished request, as a
@@ -339,7 +339,7 @@ pub struct ListTodosQuery {
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] as a `400 Bad Request` if the query fails validation
+/// Returns `AppError` as a `400 Bad Request` if the query fails validation
 /// or the cursor token is *malformed* (base64/JSON decode failure), as a
 /// `422 Unprocessable Entity` if the cursor is *invalid* (decodes but its
 /// sort/order does not match the request), or as a
@@ -372,7 +372,7 @@ pub struct TodoPath {
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] as a `404 Not Found` if the todo doesn't exist,
+/// Returns `AppError` as a `404 Not Found` if the todo doesn't exist,
 /// or a `500 Internal Server Error` if storage fails.
 pub async fn get_todo(
     State(app_state): State<AppState>,
@@ -408,7 +408,7 @@ impl From<TodoUpdateHttp> for TodoUpdateModel {
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] as a `400 Bad Request` if the task is empty,
+/// Returns `AppError` as a `400 Bad Request` if the task is empty,
 /// a `404 Not Found` if the todo doesn't exist, or a
 /// `500 Internal Server Error` / `503 Service Unavailable` on storage
 /// failure.
@@ -429,7 +429,7 @@ pub async fn update_todo(
 ///
 /// # Errors
 ///
-/// Returns [`AppError`] as a `404 Not Found` if the todo doesn't exist, or
+/// Returns `AppError` as a `404 Not Found` if the todo doesn't exist, or
 /// a `500 Internal Server Error` / `503 Service Unavailable` on storage
 /// failure.
 pub async fn delete_todo(

@@ -562,6 +562,7 @@ dependencies = [
  "async-trait",
  "clap",
  "opentelemetry",
+ "runtime",
  "sea-query",
  "sea-query-sqlx",
  "sqlx",
@@ -577,13 +578,12 @@ dependencies = [
 name = "default-api"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "async-trait",
  "axum",
  "clap",
+ "opentelemetry",
  "runtime",
- "telemetry",
  "tokio",
- "tracing",
  "web",
 ]
 
@@ -591,8 +591,10 @@ dependencies = [
 name = "default-job"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "clap",
  "jobs",
+ "opentelemetry",
  "runtime",
  "tokio",
 ]
@@ -601,7 +603,10 @@ dependencies = [
 name = "default-worker"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "clap",
+ "opentelemetry",
+ "runtime",
  "tokio",
  "worker",
 ]
@@ -3098,13 +3103,14 @@ name = "todos-api"
 version = "0.1.0"
 dependencies = [
  "aide",
- "anyhow",
+ "async-trait",
  "axum",
  "claims",
  "clap",
  "database",
  "jiff",
  "jsonschema",
+ "opentelemetry",
  "runtime",
  "schemars",
  "serde",
@@ -3112,7 +3118,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "storage",
- "telemetry",
  "todos",
  "tokio",
  "tower",
@@ -3665,6 +3670,7 @@ name = "web"
 version = "0.1.0"
 dependencies = [
  "aide",
+ "async-trait",
  "axum",
  "base64 0.23.1",
  "clap",

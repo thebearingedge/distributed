@@ -1,3 +1,6 @@
+//! The greetings producer worker: builds the Kafka publisher inside
+//! [`Worker::run`], publishes every interval, and flushes on shutdown.
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +14,7 @@ use worker::{Worker, WorkerContext};
 
 /// Publishes a greeting every `interval` until shutdown, then flushes.
 #[derive(Debug)]
-pub(crate) struct GreetingsProducerWorker {
+pub struct GreetingsProducerWorker {
     kafka: KafkaConfig,
     producer: KafkaProducerConfig,
     interval: Duration,
@@ -21,7 +24,7 @@ pub(crate) struct GreetingsProducerWorker {
 impl GreetingsProducerWorker {
     /// Creates a worker that publishes `message` every `interval`.
     #[must_use]
-    pub(crate) fn new(
+    pub fn new(
         kafka: KafkaConfig,
         producer: KafkaProducerConfig,
         interval: Duration,

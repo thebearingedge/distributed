@@ -1,8 +1,9 @@
 use std::time::Duration;
 
+use runtime::health::HealthCheck;
 use runtime::heartbeat::Heartbeat;
 use runtime::shutdown::Shutdown;
-use web::health::{HealthCheck, HealthRouter};
+use web::health::HealthRouter;
 
 /// Name of the heartbeat liveness check in `/livez` responses.
 pub const WORKER_HEARTBEAT_CHECK: &str = "heartbeat";

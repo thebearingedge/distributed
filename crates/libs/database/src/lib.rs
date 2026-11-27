@@ -12,7 +12,8 @@ pub mod config;
 /// The database error type and its classification predicates.
 pub mod db_error;
 
-/// A Postgres connectivity probe.
+/// A Postgres connectivity probe ([`crate::health::ping`]) and the pool
+/// readiness check ([`crate::health::check`]).
 pub mod health;
 
 /// Idempotency keys, the repository port for claiming and completing them,

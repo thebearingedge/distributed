@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::job::{Job, JobContext};
+use jobs::{Job, JobContext};
 use runtime::run_error::RunError;
 
 /// A placeholder job that does nothing and succeeds.
@@ -25,7 +25,7 @@ mod tests {
     use opentelemetry::metrics::NoopMeterProvider;
 
     use super::NoopJob;
-    use crate::job::{Job, JobContext};
+    use jobs::{Job, JobContext};
     use runtime::shutdown::Shutdown;
 
     #[tokio::test]

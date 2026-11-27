@@ -22,6 +22,10 @@ has no root re-exports.
 - [`RunError`](src/run_error.rs) — retryable/permanent run-failure
   classification; `exit_status` maps each variant to its [`ExitStatus`](#exit-codes)
   status.
+- [`HealthCheck`](src/health.rs) — a named, type-erased health check for
+  liveness/readiness probes: a static name (e.g. `postgres`) plus an async
+  fallible closure, so resource libs (like `database::health::check`) can
+  expose probes without depending on `web`.
 - [`Heartbeat`](src/heartbeat.rs) — liveness signal for long-running loops;
   the loop calls `beat` at least every `interval`, `check` fails once no
   beat has landed within `stale_after`, and `beat_while` keeps it fresh
@@ -54,8 +58,8 @@ has no root re-exports.
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `SHUTDOWN_DRAIN_SECONDS` | `0` | Seconds to keep serving after the shutdown signal, with readiness reporting shutting down, before servers stop accepting connections. |
-| `SHUTDOWN_TIMEOUT_SECONDS` | `20` | Seconds after the drain that tasks may take to stop before they are abandoned and the process exits 143; must be at least 1. |
+| `SHUTDOWN_DRAIN_SECONDS` | `5` | Seconds to keep serving after the shutdown signal, with readiness reporting shutting down, before servers stop accepting connections. |
+| `SHUTDOWN_TIMEOUT_SECONDS` | `15` | Seconds after the drain that tasks may take to stop before they are abandoned and the process exits 143; must be at least 1. |
 | `SHUTDOWN_FLUSH_TIMEOUT_SECONDS` | `5` | Seconds the final telemetry flush may take; must be at least 1. |
 
 CLI flags (`--shutdown-drain-seconds`, `--shutdown-timeout-seconds`,
@@ -68,7 +72,7 @@ The whole shutdown must fit inside the pod's `terminationGracePeriodSeconds`:
 
 `SHUTDOWN_DRAIN_SECONDS + SHUTDOWN_TIMEOUT_SECONDS + SHUTDOWN_FLUSH_TIMEOUT_SECONDS < terminationGracePeriodSeconds`
 
-The defaults give 0 + 20 + 5 = 25 < 30. The deadline
+The defaults give 5 + 15 + 5 = 25 < 30. The deadline
 (`SHUTDOWN_DRAIN_SECONDS + SHUTDOWN_TIMEOUT_SECONDS`) starts at the moment
 shutdown is triggered — by an OS signal or by a failing task — not at process
 start. Work a task does during shutdown (for example the greetings producer's
@@ -78,6 +82,11 @@ remaining tasks are aborted, telemetry is flushed within
 `SHUTDOWN_FLUSH_TIMEOUT_SECONDS`, and the process exits 143 — or with the
 culprit's status if a task failed first. A second `SIGTERM`/`SIGINT` exits 143
 immediately, skipping the drain, the deadline, and the flush.
+
+The default drain is non-zero because endpoint removal can race the `SIGTERM`
+that ends a rollout: a zero drain drops requests still arriving at the pod.
+During the drain, servers keep accepting connections while readiness reports
+`shutting_down`.
 
 ## Exit codes
 

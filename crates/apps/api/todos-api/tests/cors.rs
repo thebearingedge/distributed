@@ -1,6 +1,6 @@
 //! HTTP integration tests for CORS behavior, exercised through the app
-//! router composed the way `main.rs` composes it: the CORS layer applied
-//! outermost, wrapping the traced todos API router.
+//! router built with the standard API layer stack (`with_api_stack`) and
+//! the CORS origins configured per test.
 
 mod common;
 
@@ -11,6 +11,7 @@ mod tests {
         body::Body,
         http::{self, HeaderMap, HeaderValue, Request, StatusCode, header},
     };
+    use opentelemetry::metrics::NoopMeterProvider;
     use serde_json::json;
     use serde_json_assert::assert_json_include;
     use sqlx::PgPool;
@@ -18,23 +19,27 @@ mod tests {
 
     use super::common::todos_api;
     use todos_api::{api::create_todos_api, app_state::AppState};
-    use web::cors::{CorsConfig, with_cors};
-    use web::middleware::with_http_tracing;
+    use web::cors::CorsConfig;
+    use web::stack::{StackConfig, with_api_stack};
     use web::test_support::{get_with_headers, post_json_with_headers};
 
     const ALLOWED_ORIGIN: &str = "http://localhost:5173";
     const UNLISTED_ORIGIN: &str = "http://evil.example";
     const PREFLIGHT_REQUEST_HEADERS: &str = "content-type, idempotency-key";
 
-    /// Builds the todos API router with the CORS layer outermost, exactly as
-    /// `main.rs` composes it.
+    /// Builds the todos API router with the configured CORS origins on the
+    /// standard API layer stack.
     fn cors_api(postgres: PgPool, allowed_origins: Vec<HeaderValue>) -> Router {
-        with_cors(
-            with_http_tracing(create_todos_api(AppState::new(postgres))),
-            CorsConfig {
-                allowed_origins,
-                ..CorsConfig::default()
+        with_api_stack(
+            create_todos_api(AppState::new(postgres)),
+            StackConfig {
+                cors: CorsConfig {
+                    allowed_origins,
+                    ..CorsConfig::default()
+                },
+                ..StackConfig::default()
             },
+            &NoopMeterProvider::new(),
         )
     }
 

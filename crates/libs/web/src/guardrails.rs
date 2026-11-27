@@ -38,10 +38,10 @@ impl Default for GuardrailsConfig {
 /// [`crate::body_limit::with_body_limit`] wrap every route and fallback
 /// `router` has at call time.
 ///
-/// Apply it to the API router *before* passing the router to
-/// [`crate::middleware::with_http_tracing`], so error bodies carry the request
-/// id and the trace span records the status. Merge health probes afterwards so
-/// they are not affected.
+/// [`crate::stack::with_api_stack`] applies it in the standard position,
+/// inside [`crate::middleware::with_http_tracing`], so error bodies carry the
+/// request id and the trace span records the status. Merge health probes
+/// after the stack so they are not affected.
 pub fn with_guardrails(router: Router, config: GuardrailsConfig) -> Router {
     with_catch_panic(with_request_timeout(
         with_body_limit(router, config.body_limit_bytes),

@@ -6,7 +6,7 @@
 
 - `crates/apps/` — deployables, at `crates/apps/<category>/<app>`: `api/default-api` (placeholder API), `api/todos-api` (axum HTTP API), `worker/default-worker` (placeholder worker), `worker/greetings-producer` and `worker/greetings-consumer` (example Kafka producer and consumer workers), `job/default-job` (placeholder Kubernetes Job), `cli/ops-cli`
 - `crates/domains/` — business logic (e.g. `todos`, and `greetings` as the Kafka example domain): use_cases define ports, infrastructure implements them with sqlx and sea-query, or with Kafka adapters, and migrations live in `crates/domains/<domain>/migrations` where a domain has them
-- `crates/libs/` — shared libraries: `web`, `database`, `storage`, `messaging` (broker-neutral messaging error taxonomy), `kafka` (typed JSON Kafka producer and consumer on rdkafka, with messaging metrics), `telemetry`, `utils`, `runtime` (process lifecycle: shutdown and second-signal force exit, exit statuses, heartbeat, task supervision, shutdown deadline, lifecycle config), `worker` (worker trait, probes, supervision), `jobs` (job trait, job context, and runner)
+- `crates/libs/` — shared libraries: `web` (API process shape: `web::launch` and the `Api` trait), `database`, `storage`, `messaging` (broker-neutral messaging error taxonomy), `kafka` (typed JSON Kafka producer and consumer on rdkafka, with messaging metrics), `telemetry`, `utils`, `runtime` (process lifecycle: shutdown and second-signal force exit, exit statuses, heartbeat, task supervision, shutdown deadline, lifecycle config, health checks), `worker` (worker trait, probes, supervision), `jobs` (job trait, job context, and runner)
 
 Stack: axum, sqlx (Postgres), sea-query, opentelemetry, tracing, rdkafka (Kafka), thiserror.
 

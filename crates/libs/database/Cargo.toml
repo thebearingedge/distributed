@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+runtime.workspace = true
 storage.workspace = true
 
 async-trait.workspace = true
