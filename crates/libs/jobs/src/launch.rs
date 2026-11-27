@@ -25,9 +25,9 @@ use crate::runner;
 ///
 /// Panics if called outside a multi-thread Tokio runtime or twice per process
 /// (see `telemetry::Telemetry::init`).
-pub async fn launch<J: Job + ?Sized>(
+pub async fn launch<J: Job>(
     service_name: &'static str,
-    job: &J,
+    job: J,
     lifecycle: &LifecycleConfig,
 ) -> ExitCode {
     let telemetry = Telemetry::init(service_name);
@@ -46,7 +46,7 @@ pub async fn launch<J: Job + ?Sized>(
     tracing::info!(job = job.name(), "job started");
 
     let context = JobContext::new(shutdown, Arc::new(telemetry.meter_provider().clone()));
-    let outcome = runner::run_within(job, context, lifecycle.deadline()).await;
+    let outcome = runner::run_within(&job, context, lifecycle.deadline()).await;
 
     tracing::info!(
         job = job.name(),

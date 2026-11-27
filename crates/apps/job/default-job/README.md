@@ -1,7 +1,11 @@
 # default-job
 
-A placeholder job image: it initializes telemetry, logs `"job started"` and
-`"job finished"`, runs a no-op job, and exits with `0`. It reserves the
+A placeholder job image: the app value is
+[`NoopJob`](src/noop_job.rs), defined in the crate's
+lib target (`default_job`); `src/main.rs` only parses its args and calls
+`jobs::launch("default_job", NoopJob, &args.lifecycle)`. It initializes
+telemetry, logs `"job started"` and `"job finished"`, runs the no-op job, and
+exits with `0`. It reserves the
 default Kubernetes Job / CronJob slot so deployments can swap in real jobs
 without touching the wiring. See
 [`crates/libs/jobs/README.md`](../../../libs/jobs/README.md) for exit codes,

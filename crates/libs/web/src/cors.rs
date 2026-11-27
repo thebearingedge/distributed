@@ -50,7 +50,58 @@ impl Default for CorsConfig {
     }
 }
 
-/// Errors from [`parse_allowed_origins`].
+/// Exact origins allowed to make cross-origin requests, parsed from a
+/// comma-separated value at the configuration edge. Empty input yields an
+/// empty list (CORS off).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AllowedOrigins(Vec<HeaderValue>);
+
+impl AllowedOrigins {
+    /// Parses a comma-separated origins value into exact-origin header
+    /// values. Entries are trimmed and empty entries are dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseOriginsError::TrailingSlash`] when an entry ends with
+    /// a slash, [`ParseOriginsError::Wildcard`] when an entry is `*`, and
+    /// [`ParseOriginsError::Invalid`] when an entry is not a valid header
+    /// value.
+    pub fn parse(raw: &str) -> Result<Self, ParseOriginsError> {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|origin| !origin.is_empty())
+            .map(|origin| {
+                if origin == "*" {
+                    return Err(ParseOriginsError::Wildcard);
+                }
+                if origin.ends_with('/') {
+                    return Err(ParseOriginsError::TrailingSlash {
+                        origin: origin.to_owned(),
+                    });
+                }
+                HeaderValue::from_str(origin).map_err(|source| ParseOriginsError::Invalid {
+                    origin: origin.to_owned(),
+                    source,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Self)
+    }
+
+    /// The allowed origins as a slice of header values.
+    #[must_use]
+    pub fn as_slice(&self) -> &[HeaderValue] {
+        &self.0
+    }
+
+    /// Consumes the origins, returning them as owned header values.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<HeaderValue> {
+        self.0
+    }
+}
+
+/// Errors from [`AllowedOrigins::parse`].
 #[derive(Debug, thiserror::Error)]
 pub enum ParseOriginsError {
     /// An origin ended with a trailing slash.
@@ -59,6 +110,9 @@ pub enum ParseOriginsError {
         /// The rejected origin.
         origin: String,
     },
+    /// An origin was the wildcard `*`, which is never supported.
+    #[error("CORS origin `*` is not supported; list explicit origins")]
+    Wildcard,
     /// An origin was not a valid header value.
     #[error("invalid CORS origin: {origin}")]
     Invalid {
@@ -68,33 +122,6 @@ pub enum ParseOriginsError {
         #[source]
         source: axum::http::header::InvalidHeaderValue,
     },
-}
-
-/// Parses a comma-separated origins value into exact-origin header values.
-/// Entries are trimmed, empty entries are dropped, and empty input yields an
-/// empty list (CORS off).
-///
-/// # Errors
-///
-/// Returns [`ParseOriginsError::TrailingSlash`] when an entry ends with a
-/// slash and [`ParseOriginsError::Invalid`] when an entry is not a valid
-/// header value.
-pub fn parse_allowed_origins(raw: &str) -> Result<Vec<HeaderValue>, ParseOriginsError> {
-    raw.split(',')
-        .map(str::trim)
-        .filter(|origin| !origin.is_empty())
-        .map(|origin| {
-            if origin.ends_with('/') {
-                return Err(ParseOriginsError::TrailingSlash {
-                    origin: origin.to_owned(),
-                });
-            }
-            HeaderValue::from_str(origin).map_err(|source| ParseOriginsError::Invalid {
-                origin: origin.to_owned(),
-                source,
-            })
-        })
-        .collect()
 }
 
 /// Wraps `router` with a [`CorsLayer`] according to `config`: requests whose
@@ -145,7 +172,7 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    use super::{CorsConfig, parse_allowed_origins, with_cors};
+    use super::{AllowedOrigins, CorsConfig, with_cors};
     use crate::request_id::REQUEST_ID_HEADER;
 
     const ALLOWED_ORIGIN: &str = "http://localhost:5173";
@@ -350,15 +377,16 @@ mod tests {
     #[test]
     fn empty_raw_yields_no_origins() {
         assert_eq!(
-            parse_allowed_origins("").unwrap(),
+            AllowedOrigins::parse("").unwrap().into_vec(),
             Vec::<HeaderValue>::new()
         );
     }
 
     #[test]
     fn entries_are_trimmed() {
-        let origins =
-            parse_allowed_origins(" http://localhost:5173 , http://localhost:3000 ").unwrap();
+        let origins = AllowedOrigins::parse(" http://localhost:5173 , http://localhost:3000 ")
+            .unwrap()
+            .into_vec();
         assert_eq!(
             origins,
             vec![
@@ -370,23 +398,44 @@ mod tests {
 
     #[test]
     fn trailing_slash_is_rejected_with_the_origin_named() {
-        let err = parse_allowed_origins("http://localhost:5173/").unwrap_err();
+        let err = AllowedOrigins::parse("http://localhost:5173/").unwrap_err();
         assert!(err.to_string().contains("http://localhost:5173"));
     }
 
     #[test]
+    fn wildcard_origin_is_rejected() {
+        let err = AllowedOrigins::parse("*").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("CORS origin `*` is not supported; list explicit origins"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn wildcard_among_valid_origins_is_rejected() {
+        let err =
+            AllowedOrigins::parse("http://localhost:5173, *, http://localhost:3000").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("CORS origin `*` is not supported; list explicit origins"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn invalid_header_value_is_rejected() {
-        let err = parse_allowed_origins("http://bad\u{1}origin.com").unwrap_err();
+        let err = AllowedOrigins::parse("http://bad\u{1}origin.com").unwrap_err();
         assert!(err.to_string().contains("invalid CORS origin"));
     }
 
     #[test]
     fn empty_entries_between_commas_are_dropped() {
         let origins =
-            parse_allowed_origins("http://localhost:5173,,http://localhost:3000").unwrap();
+            AllowedOrigins::parse("http://localhost:5173,,http://localhost:3000").unwrap();
         assert_eq!(
-            origins,
-            vec![
+            origins.as_slice(),
+            [
                 HeaderValue::from_static("http://localhost:5173"),
                 HeaderValue::from_static("http://localhost:3000"),
             ]

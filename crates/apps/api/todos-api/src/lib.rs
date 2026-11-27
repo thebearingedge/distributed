@@ -5,6 +5,8 @@
 //! - [`controller`] defines the HTTP DTOs and the request handlers
 //! - [`app_state`] bundles the domain interactors and the request-validation
 //!   schema validators the handlers share
+//! - [`TodosApi`] implements the [`web::Api`] process contract
+//!   [`web::launch()`] drives
 //!
 //! Domain errors are mapped to HTTP responses at this boundary in
 //! `app_error.rs` (private) rather than inside the `web` lib.
@@ -18,3 +20,6 @@ pub mod app_state;
 pub mod controller;
 /// The route paths shared by the router and the create response.
 pub mod paths;
+mod todos_api;
+
+pub use todos_api::TodosApi;

@@ -5,10 +5,16 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+runtime.workspace = true
 worker.workspace = true
 
+async-trait.workspace = true
 clap.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+opentelemetry.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

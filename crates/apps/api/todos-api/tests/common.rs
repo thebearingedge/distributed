@@ -4,19 +4,19 @@
 //! needed here.
 
 use axum::Router;
+use opentelemetry::metrics::NoopMeterProvider;
 use sqlx::PgPool;
 
 use todos_api::{api::create_todos_api, app_state::AppState};
-use web::{
-    guardrails::{GuardrailsConfig, with_guardrails},
-    middleware::with_http_tracing,
-};
+use web::stack::{StackConfig, with_api_stack};
 
-/// Builds the todos API router against the test database, layered like `main.rs`
-/// (request guardrails inside request-id tracing).
+/// Builds the todos API router against the test database with the same
+/// standard API layer stack as production, measured by a no-op meter
+/// provider.
 pub fn todos_api(postgres: PgPool) -> Router {
-    with_http_tracing(with_guardrails(
+    with_api_stack(
         create_todos_api(AppState::new(postgres)),
-        GuardrailsConfig::default(),
-    ))
+        StackConfig::default(),
+        &NoopMeterProvider::new(),
+    )
 }

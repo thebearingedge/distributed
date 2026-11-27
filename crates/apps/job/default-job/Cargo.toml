@@ -8,8 +8,12 @@ publish.workspace = true
 jobs.workspace = true
 runtime.workspace = true
 
+async-trait.workspace = true
 clap.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+opentelemetry.workspace = true
 
 [lints]
 workspace = true

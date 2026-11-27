@@ -3,12 +3,11 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use axum::http::HeaderValue;
-
 use runtime::config::LifecycleConfig;
 
-use crate::cors::{ParseOriginsError, parse_allowed_origins};
+use crate::cors::{AllowedOrigins, CorsConfig};
 use crate::guardrails::GuardrailsConfig;
+use crate::stack::StackConfig;
 
 /// Default for [`crate::config::ApiConfig::request_timeout_seconds`].
 pub const REQUEST_TIMEOUT_DEFAULT_SECONDS: u64 = 30;
@@ -33,9 +32,14 @@ pub struct ApiConfig {
     #[arg(long, env = "HEALTH_CHECK_TIMEOUT_SECONDS", default_value_t = 2)]
     pub health_check_timeout_seconds: u64,
     /// Comma-separated exact origins allowed to make cross-origin
-    /// requests; unset or empty means CORS is off.
-    #[arg(long, env = "CORS_ALLOWED_ORIGINS")]
-    pub cors_allowed_origins: Option<String>,
+    /// requests; entries must not end with a slash, and the wildcard `*` is
+    /// not supported; unset or empty means CORS is off.
+    #[arg(
+        long,
+        env = "CORS_ALLOWED_ORIGINS",
+        value_parser = AllowedOrigins::parse
+    )]
+    pub cors_allowed_origins: Option<AllowedOrigins>,
     /// Seconds a request may take to produce a response before it is
     /// answered with `503 Service Unavailable`.
     #[arg(long, env = "REQUEST_TIMEOUT_SECONDS", default_value_t = REQUEST_TIMEOUT_DEFAULT_SECONDS)]
@@ -77,18 +81,27 @@ impl ApiConfig {
         }
     }
 
-    /// Exact origins allowed to make cross-origin requests; empty means
-    /// CORS is off.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ParseOriginsError`] when `cors_allowed_origins` contains
-    /// an entry ending with a slash or an entry that is not a valid header
-    /// value.
-    pub fn allowed_origins(&self) -> Result<Vec<HeaderValue>, ParseOriginsError> {
-        self.cors_allowed_origins
-            .as_deref()
-            .map_or(Ok(Vec::new()), parse_allowed_origins)
+    /// The CORS policy configured for this binary; unset origins mean CORS
+    /// is off.
+    #[must_use]
+    pub fn cors(&self) -> CorsConfig {
+        CorsConfig {
+            allowed_origins: self
+                .cors_allowed_origins
+                .as_ref()
+                .map_or_else(Vec::new, |origins| origins.as_slice().to_vec()),
+            ..CorsConfig::default()
+        }
+    }
+
+    /// The standard API layer stack configuration for this binary: request
+    /// guardrails and CORS policy.
+    #[must_use]
+    pub fn stack(&self) -> StackConfig {
+        StackConfig {
+            guardrails: self.guardrails(),
+            cors: self.cors(),
+        }
     }
 }
 
@@ -96,18 +109,18 @@ impl ApiConfig {
 mod tests {
     use std::time::Duration;
 
-    use axum::http::HeaderValue;
     use clap::Parser;
 
     use super::{ApiConfig, GuardrailsConfig};
+    use crate::cors::CorsConfig;
 
     #[test]
     fn defaults_apply_when_no_args_or_env() {
         let config = ApiConfig::try_parse_from(["todos-api"]).unwrap();
         assert_eq!(config.listen_address.to_string(), "0.0.0.0:3000");
         assert_eq!(config.health_check_timeout_seconds, 2);
-        assert_eq!(config.lifecycle.shutdown_drain_seconds, 0);
-        assert_eq!(config.lifecycle.shutdown_timeout_seconds, 20);
+        assert_eq!(config.lifecycle.shutdown_drain_seconds, 5);
+        assert_eq!(config.lifecycle.shutdown_timeout_seconds, 15);
         assert_eq!(config.lifecycle.shutdown_flush_timeout_seconds, 5);
         assert_eq!(config.cors_allowed_origins, None);
         assert_eq!(config.request_timeout_seconds, 30);
@@ -115,32 +128,53 @@ mod tests {
     }
 
     #[test]
-    fn allowed_origins_is_empty_when_unset() {
+    fn cors_is_disabled_when_unset() {
         let config = ApiConfig::try_parse_from(["todos-api"]).unwrap();
-        assert_eq!(config.allowed_origins().unwrap(), Vec::<HeaderValue>::new());
+        assert_eq!(
+            config.cors().allowed_origins,
+            [] as [axum::http::HeaderValue; 0]
+        );
     }
 
     #[test]
-    fn allowed_origins_trims_and_splits_the_configured_value() {
+    fn cors_origins_are_trimmed_and_split() {
         let config = ApiConfig::try_parse_from([
             "todos-api",
             "--cors-allowed-origins",
             " http://a , http://b ",
         ])
         .unwrap();
-        let values = config.allowed_origins().unwrap();
-        let origins: Vec<_> = values.iter().map(|value| value.to_str().unwrap()).collect();
+        let cors = config.cors();
+        let origins: Vec<_> = cors
+            .allowed_origins
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect();
         assert_eq!(origins, vec!["http://a", "http://b"]);
     }
 
     #[test]
-    fn allowed_origins_delegates_parse_errors() {
-        let config =
-            ApiConfig::try_parse_from(["todos-api", "--cors-allowed-origins", "http://a/"])
-                .unwrap();
-        let error = config.allowed_origins().unwrap_err();
+    fn invalid_origins_fail_to_parse() {
+        let error = ApiConfig::try_parse_from([
+            "todos-api",
+            "--cors-allowed-origins",
+            "https://a.example/",
+        ])
+        .unwrap_err();
         assert!(
             error.to_string().contains("must not end with a slash"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn wildcard_origin_fails_to_parse() {
+        let error =
+            ApiConfig::try_parse_from(["todos-api", "--cors-allowed-origins", "*"]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("CORS origin `*` is not supported; list explicit origins"),
             "unexpected error: {error}"
         );
     }
@@ -174,7 +208,13 @@ mod tests {
         assert_eq!(args.api.lifecycle.shutdown_drain_seconds, 3);
         assert_eq!(args.api.lifecycle.shutdown_timeout_seconds, 12);
         assert_eq!(args.api.health_check_timeout_seconds, 4);
-        assert_eq!(args.api.cors_allowed_origins.as_deref(), Some("http://a"));
+        let cors = args.api.cors();
+        let cors_origins: Vec<_> = cors
+            .allowed_origins
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect();
+        assert_eq!(cors_origins, vec!["http://a"]);
         assert_eq!(args.api.request_timeout_seconds, 9);
         assert_eq!(args.api.request_body_limit_bytes, 2048);
     }
@@ -199,6 +239,8 @@ mod tests {
             "todos-api",
             "--shutdown-drain-seconds",
             "1",
+            "--shutdown-timeout-seconds",
+            "20",
             "--shutdown-flush-timeout-seconds",
             "3",
         ])
@@ -217,5 +259,40 @@ mod tests {
     fn guardrails_defaults_match_the_guardrails_config_default() {
         let config = ApiConfig::try_parse_from(["todos-api"]).unwrap();
         assert_eq!(config.guardrails(), GuardrailsConfig::default());
+    }
+
+    #[test]
+    fn stack_combines_guardrails_and_cors() {
+        let config = ApiConfig::try_parse_from([
+            "todos-api",
+            "--cors-allowed-origins",
+            "http://a",
+            "--request-timeout-seconds",
+            "9",
+            "--request-body-limit-bytes",
+            "2048",
+        ])
+        .unwrap();
+
+        let stack = config.stack();
+
+        assert_eq!(
+            stack.guardrails,
+            GuardrailsConfig {
+                request_timeout: Duration::from_secs(9),
+                body_limit_bytes: 2048,
+            }
+        );
+        let origins: Vec<_> = stack
+            .cors
+            .allowed_origins
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect();
+        assert_eq!(origins, vec!["http://a"]);
+        assert_eq!(
+            stack.cors.allowed_methods,
+            CorsConfig::default().allowed_methods
+        );
     }
 }

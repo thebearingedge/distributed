@@ -7,10 +7,10 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use config::Args;
-use jobs::NoopJob;
+use default_job::NoopJob;
 
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
-    jobs::launch("default_job", &NoopJob, &args.lifecycle).await
+    jobs::launch("default_job", NoopJob, &args.lifecycle).await
 }

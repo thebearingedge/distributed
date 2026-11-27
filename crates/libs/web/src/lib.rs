@@ -2,8 +2,13 @@
 //! health-probe routing, tracing and metrics middleware, request guardrails
 //! (timeout, body limit, catch-panic), `OpenAPI` helpers, the runtime
 //! configuration for axum API binaries, the draining HTTP server
-//! ([`crate::server::serve`]), and — under the `test-support` feature —
-//! oneshot HTTP test helpers.
+//! ([`crate::server::serve`]), the API process contract
+//! ([`crate::Api`], [`crate::ApiParts`]) with its [`crate::launch()`]
+//! composition root, and — under the `test-support` feature — oneshot HTTP
+//! test helpers.
+
+/// The API process contract ([`crate::Api`], [`crate::ApiParts`]).
+pub mod api;
 
 /// HTTP error-response body types ([`crate::api_error::ErrorBody`],
 /// [`crate::api_error::ValidationErrorBody`]) and the
@@ -44,6 +49,9 @@ pub mod guardrails;
 /// ([`crate::health::HealthRouter`]).
 pub mod health;
 
+/// The API process composition root ([`crate::launch()`]).
+pub mod launch;
+
 /// OpenTelemetry-convention request tracing middleware.
 pub mod middleware;
 
@@ -62,6 +70,9 @@ pub mod request_id;
 /// with a drain delay ([`crate::server::serve`]).
 pub mod server;
 
+/// The standard API layer stack ([`crate::stack::with_api_stack`]).
+pub mod stack;
+
 /// Request timeout middleware ([`crate::timeout::with_request_timeout`]).
 pub mod timeout;
 
@@ -71,3 +82,6 @@ pub mod timeout;
 /// compiled only when the `test-support` feature is enabled.
 #[cfg(feature = "test-support")]
 pub mod test_support;
+
+pub use api::{Api, ApiContext, ApiParts};
+pub use launch::launch;

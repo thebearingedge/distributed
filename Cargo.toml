@@ -22,7 +22,6 @@ worker = { path = "crates/libs/worker" }
 kafka = { path = "crates/libs/kafka" }
 
 aide = { version = "0.15.1", features = ["axum", "axum-json", "axum-query"] }
-anyhow = "1.0.104"
 async-stream = "0.3.6"
 async-trait = "0.1.92"
 axum = { version = "0.8.9", features = ["macros"] }

@@ -1,6 +1,10 @@
 # greetings-producer
 
-A worker that publishes a greeting to the `greetings` topic every
+The app value is
+[`GreetingsProducerWorker`](src/greetings_producer_worker.rs), defined in the
+crate's lib target (`greetings_producer`); `src/main.rs` only parses its args and calls
+`worker::launch("greetings_producer", worker, &args.worker)`. It publishes a
+greeting to the `greetings` topic every
 `GREETING_INTERVAL_SECONDS` (default `3`, message `GREETING_MESSAGE`, default
 `Hello, Kafka!`), heartbeating on an idle tick and while each send runs so
 `/livez` stays `200`, and serving `/readyz` (which flips to `503` once SIGTERM

@@ -7,7 +7,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use config::Args;
-use worker::InertWorker;
+use default_worker::InertWorker;
 
 #[tokio::main]
 async fn main() -> ExitCode {

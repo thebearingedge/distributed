@@ -6,14 +6,16 @@ publish.workspace = true
 
 [dependencies]
 runtime.workspace = true
-telemetry.workspace = true
 web.workspace = true
 
-anyhow.workspace = true
+async-trait.workspace = true
 axum.workspace = true
 clap.workspace = true
 tokio.workspace = true
-tracing.workspace = true
+
+[dev-dependencies]
+opentelemetry.workspace = true
+web = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

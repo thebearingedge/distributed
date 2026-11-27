@@ -24,7 +24,7 @@ Work **inside-out**: domain → infrastructure → delivery → tests. Each step
 
 ## 3. Delivery — the app layer
 
-In `crates/apps/<category>/<app>/src` (e.g. `crates/apps/api/todos-api/src`), working through four files:
+In `crates/apps/<category>/<app>/src` (e.g. `crates/apps/api/todos-api/src`), working through four files. These files live in the app's lib target — the app implements `web::Api` there and the bin is thin (`main.rs` parses `Args`, constructs the app value, calls `web::launch`; see `writing-rust`):
 
 ### controller.rs — handler + DTOs
 

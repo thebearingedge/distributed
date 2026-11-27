@@ -58,7 +58,7 @@ mod tests {
         assert_eq!(config.health_listen_address.to_string(), "0.0.0.0:3000");
         assert_eq!(config.health_check_timeout_seconds, 2);
         assert_eq!(config.heartbeat_stale_seconds, 30);
-        assert_eq!(config.lifecycle.shutdown_timeout_seconds, 20);
+        assert_eq!(config.lifecycle.shutdown_timeout_seconds, 15);
     }
 
     #[test]

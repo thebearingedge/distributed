@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 /// Default for [`crate::config::LifecycleConfig::shutdown_drain_seconds`].
-pub const SHUTDOWN_DRAIN_DEFAULT_SECONDS: u64 = 0;
+pub const SHUTDOWN_DRAIN_DEFAULT_SECONDS: u64 = 5;
 /// Default for [`crate::config::LifecycleConfig::shutdown_timeout_seconds`].
-pub const SHUTDOWN_TIMEOUT_DEFAULT_SECONDS: u64 = 20;
+pub const SHUTDOWN_TIMEOUT_DEFAULT_SECONDS: u64 = 15;
 /// Default for [`crate::config::LifecycleConfig::shutdown_flush_timeout_seconds`].
 pub const SHUTDOWN_FLUSH_TIMEOUT_DEFAULT_SECONDS: u64 = 5;
 
@@ -91,9 +91,15 @@ mod tests {
     #[test]
     fn defaults() {
         let config = LifecycleConfig::try_parse_from(["test"]).unwrap();
-        assert_eq!(config.shutdown_drain_seconds, 0);
-        assert_eq!(config.shutdown_timeout_seconds, 20);
+        assert_eq!(config.shutdown_drain_seconds, 5);
+        assert_eq!(config.shutdown_timeout_seconds, 15);
         assert_eq!(config.shutdown_flush_timeout_seconds, 5);
+    }
+
+    #[test]
+    fn default_drain_is_nonzero() {
+        let config = LifecycleConfig::try_parse_from(["test"]).unwrap();
+        assert!(config.drain_delay() > Duration::ZERO);
     }
 
     #[test]

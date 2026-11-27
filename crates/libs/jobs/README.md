@@ -31,14 +31,19 @@ Jobs should be idempotent, because a retried Job runs again from the start.
   [`runtime::config::LifecycleConfig`](../../runtime/src/config.rs), ends with
   a telemetry flush bounded by the flush timeout, and returns the process
   exit code.
-- [`NoopJob`](src/noop.rs) — a placeholder job that does nothing and succeeds.
+
+Every job binary is a lib plus a thin bin: the job value lives in the app's
+lib target, and `main.rs` only parses args, constructs the job, and calls
+[`launch`](src/launch.rs). The placeholder job app,
+[`default-job`](../../apps/job/default-job), implements one in its lib
+target.
 
 ## Configuration
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `SHUTDOWN_DRAIN_SECONDS` | `0` | Seconds to keep serving after the shutdown signal. Jobs have no server to drain but accept the knob. |
-| `SHUTDOWN_TIMEOUT_SECONDS` | `20` | Seconds after the drain the job may take to stop before it is abandoned and the process exits 143; must be at least 1. |
+| `SHUTDOWN_DRAIN_SECONDS` | `5` | Seconds to keep serving after the shutdown signal. Jobs have no server to drain but accept the knob. |
+| `SHUTDOWN_TIMEOUT_SECONDS` | `15` | Seconds after the drain the job may take to stop before it is abandoned and the process exits 143; must be at least 1. |
 | `SHUTDOWN_FLUSH_TIMEOUT_SECONDS` | `5` | Seconds the final telemetry flush may take; must be at least 1. |
 
 These come from `runtime::config::LifecycleConfig`, which the app's `Args`
@@ -86,22 +91,53 @@ skipping the drain, the deadline, and the flush.
 
 ## Composing a job
 
+The job value lives in the app's lib target; `main.rs` is parse → construct →
+launch, and [`launch`](src/launch.rs) takes the job **by value**:
+
 ```rust
-use clap::Parser;
-use jobs::NoopJob;
-use runtime::config::LifecycleConfig;
+// crates/apps/job/example-job/src/lib.rs
+use async_trait::async_trait;
 
-/// Command-line configuration for the job binary.
-#[derive(Debug, clap::Parser)]
-struct Args {
-    /// Process lifecycle configuration.
-    #[command(flatten)]
-    lifecycle: LifecycleConfig,
-}
+use jobs::{Job, JobContext};
+use runtime::run_error::RunError;
 
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
-    let args = Args::parse();
-    jobs::launch("default_job", &NoopJob, &args.lifecycle).await
+/// The example job process: a run-to-completion, idempotent cleanup.
+#[derive(Debug)]
+pub struct ExampleJob;
+
+#[async_trait]
+impl Job for ExampleJob {
+    fn name(&self) -> &'static str {
+        "example"
+    }
+
+    async fn run(&self, context: JobContext) -> Result<(), RunError> {
+        // Idempotent work, observing context.shutdown().
+        Ok(())
+    }
 }
 ```
+
+```rust
+// crates/apps/job/example-job/src/main.rs
+use std::process::ExitCode;
+
+use clap::Parser;
+
+use config::Args;
+use example_job::ExampleJob;
+
+mod config;
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    let args = Args::parse();
+
+    jobs::launch("example_job", ExampleJob, &args.lifecycle).await
+}
+```
+
+where `src/config.rs` is the bin-private `Args` that flattens
+[`runtime::config::LifecycleConfig`](../../runtime/src/config.rs). The
+placeholder job app, [`default-job`](../../apps/job/default-job), shows a
+complete implementation.
