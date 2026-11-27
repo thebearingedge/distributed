@@ -3,27 +3,31 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use tokio::net::TcpListener;
+use axum::Router;
 
-use runtime::exit_status::ExitStatus;
 use runtime::heartbeat::Heartbeat;
-use runtime::lifecycle::{RunOutcome, finish};
 use runtime::shutdown::Shutdown;
 use telemetry::Telemetry;
-use web::server::serve;
+use web::ApiParts;
+use web::Label;
+use web::launch_with;
 
 use crate::config::WorkerConfig;
-use crate::probes::probes_router;
-use crate::supervisor::supervise;
+use crate::probes::heartbeat_check;
 use crate::worker::{Worker, WorkerContext};
 
-/// Initializes telemetry, installs shutdown signal handlers (a second signal
-/// exits 143 immediately), binds the probe listener, hands the worker the
-/// telemetry meter provider through its [`crate::WorkerContext`], and
-/// supervises the worker and its probe server on a
-/// [`runtime::supervisor::Supervisor`] with the shutdown deadline from
+/// Initializes telemetry, creates the process shutdown and heartbeat, hands
+/// the worker the telemetry meter provider through its
+/// [`crate::WorkerContext`], binds the probe listener, installs shutdown
+/// signal handlers immediately before supervision (a second signal exits 143
+/// immediately), and supervises the worker task (named [`Worker::name`]) and
+/// the probe server through [`launch_with`] with the shutdown deadline from
 /// `config.lifecycle`, ending with a bounded telemetry flush. Returns the
-/// process [`ExitCode`].
+/// process [`ExitCode`]. A signal during startup keeps its default
+/// disposition.
+///
+/// `/livez` is heartbeat-backed and fails once the heartbeat goes stale;
+/// `/readyz` flips to `503 shutting_down` on shutdown.
 ///
 /// `service_name` is the default `service.name`, which `OTEL_SERVICE_NAME`
 /// overrides.
@@ -38,36 +42,7 @@ pub async fn launch<W: Worker + 'static>(
     config: &WorkerConfig,
 ) -> ExitCode {
     let telemetry = Telemetry::init(service_name);
-    let lifecycle = &config.lifecycle;
-
     let shutdown = Shutdown::new();
-    if let Err(error) = shutdown.listen_for_signals() {
-        tracing::error!(%error, "installing signal handlers failed");
-        return finish(
-            RunOutcome::completed(ExitStatus::Retryable),
-            lifecycle.flush_timeout(),
-            move || telemetry.shutdown(),
-        )
-        .await;
-    }
-
-    let listener = match TcpListener::bind(config.health_listen_address).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            tracing::error!(
-                %error,
-                address = %config.health_listen_address,
-                "binding probe listener failed"
-            );
-            return finish(
-                RunOutcome::completed(ExitStatus::Retryable),
-                lifecycle.flush_timeout(),
-                move || telemetry.shutdown(),
-            )
-            .await;
-        }
-    };
-
     let heartbeat = Heartbeat::new(config.heartbeat_stale_after());
     let context = WorkerContext::new(
         shutdown.clone(),
@@ -75,29 +50,20 @@ pub async fn launch<W: Worker + 'static>(
         Arc::new(telemetry.meter_provider().clone()),
     );
 
-    let router = probes_router(&heartbeat, config.health_check_timeout(), shutdown.clone());
-    let server = serve(listener, router, shutdown.clone(), lifecycle.drain_delay());
-
     let name = worker.name();
-    tracing::info!(
-        worker = name,
-        address = %config.health_listen_address,
-        "worker started"
-    );
+    let parts = ApiParts::new(Router::new())
+        .liveness(heartbeat_check(&heartbeat))
+        .task(name, async move { worker.run(context).await });
+    let router = parts.probes(config.health_check_timeout(), &shutdown);
 
-    let supervised = supervise(Arc::new(worker), context, server, lifecycle.deadline()).await;
-
-    tracing::info!(
-        worker = name,
-        status = ?supervised.outcome.status,
-        code = supervised.outcome.status.code(),
-        culprit = ?supervised.culprit,
-        deadline_exceeded = supervised.outcome.deadline_exceeded,
-        "worker stopped"
-    );
-
-    finish(supervised.outcome, lifecycle.flush_timeout(), move || {
-        telemetry.shutdown()
-    })
+    launch_with(
+        telemetry,
+        shutdown,
+        &config.lifecycle,
+        config.health_listen_address,
+        router,
+        parts,
+        Label::Worker(name),
+    )
     .await
 }

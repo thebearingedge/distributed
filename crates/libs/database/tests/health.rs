@@ -2,12 +2,7 @@
 
 use sqlx::PgPool;
 
-use database::health::{POSTGRES_HEALTH_CHECK, check, ping};
-
-#[sqlx::test]
-async fn ping_succeeds_on_a_live_pool(postgres: PgPool) {
-    ping(postgres).await.unwrap();
-}
+use database::health::{POSTGRES_HEALTH_CHECK, check};
 
 #[sqlx::test]
 async fn check_is_named_postgres(postgres: PgPool) {

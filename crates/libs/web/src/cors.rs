@@ -10,37 +10,33 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::request_id::REQUEST_ID_HEADER;
 
-/// `idempotency-key` request header, for callers whose API accepts idempotent
-/// operations.
-pub const IDEMPOTENCY_KEY: HeaderName = HeaderName::from_static("idempotency-key");
+const IDEMPOTENCY_KEY: HeaderName = HeaderName::from_static("idempotency-key");
 
-/// `traceparent` request header, as read by [`crate::middleware::with_http_tracing`].
-pub const TRACEPARENT: HeaderName = HeaderName::from_static("traceparent");
+const TRACEPARENT: HeaderName = HeaderName::from_static("traceparent");
 
-/// `tracestate` request header, as read by [`crate::middleware::with_http_tracing`].
-pub const TRACESTATE: HeaderName = HeaderName::from_static("tracestate");
+const TRACESTATE: HeaderName = HeaderName::from_static("tracestate");
 
 const CORS_MAX_AGE: Duration = Duration::from_secs(600);
 
-/// CORS policy for [`with_cors`]: exact origins plus the allowed methods and
+/// CORS policy for `with_cors`: exact origins plus the allowed methods and
 /// headers advertised on preflight responses.
 #[derive(Debug, Clone)]
-pub struct CorsConfig {
+pub(crate) struct CorsConfig {
     /// Exact origins allowed to make cross-origin requests; empty means CORS
     /// is off. Never a wildcard.
-    pub allowed_origins: Vec<HeaderValue>,
+    pub origins: Vec<HeaderValue>,
     /// Methods advertised as `Access-Control-Allow-Methods`.
-    pub allowed_methods: Vec<Method>,
+    pub methods: Vec<Method>,
     /// Headers advertised as `Access-Control-Allow-Headers`.
-    pub allowed_headers: Vec<HeaderName>,
+    pub headers: Vec<HeaderName>,
 }
 
 impl Default for CorsConfig {
     fn default() -> Self {
         Self {
-            allowed_origins: Vec::new(),
-            allowed_methods: vec![Method::GET, Method::POST, Method::PUT, Method::DELETE],
-            allowed_headers: vec![
+            origins: Vec::new(),
+            methods: vec![Method::GET, Method::POST, Method::PUT, Method::DELETE],
+            headers: vec![
                 header::CONTENT_TYPE,
                 IDEMPOTENCY_KEY,
                 TRACEPARENT,
@@ -125,7 +121,7 @@ pub enum ParseOriginsError {
 }
 
 /// Wraps `router` with a [`CorsLayer`] according to `config`: requests whose
-/// `Origin` is not in `config.allowed_origins` receive no CORS headers, and
+/// `Origin` is not in `config.origins` receive no CORS headers, and
 /// the layer never emits a wildcard `Access-Control-Allow-Origin` or reflects
 /// an arbitrary request origin.
 ///
@@ -139,22 +135,17 @@ pub enum ParseOriginsError {
 /// [`Access-Control-Expose-Headers`](https://fetch.spec.whatwg.org/#http-access-control-expose-headers)
 /// (`location` and [`crate::request_id::REQUEST_ID_HEADER`]).
 ///
-/// Empty `config.allowed_origins` leaves the router unchanged (CORS off), so
+/// Empty `config.origins` leaves the router unchanged (CORS off), so
 /// callers without configured origins get no CORS layer at all.
-///
-/// # Panics
-///
-/// Panics when `config.allowed_origins` contains a wildcard (`*`) value, via
-/// [`AllowOrigin::list`].
-pub fn with_cors(router: Router, config: CorsConfig) -> Router {
-    if config.allowed_origins.is_empty() {
+pub(crate) fn with_cors(router: Router, config: CorsConfig) -> Router {
+    if config.origins.is_empty() {
         return router;
     }
     router.layer(
         CorsLayer::new()
-            .allow_origin(AllowOrigin::list(config.allowed_origins))
-            .allow_methods(config.allowed_methods)
-            .allow_headers(config.allowed_headers)
+            .allow_origin(AllowOrigin::list(config.origins))
+            .allow_methods(config.methods)
+            .allow_headers(config.headers)
             .expose_headers([header::LOCATION, REQUEST_ID_HEADER])
             .max_age(CORS_MAX_AGE),
     )
@@ -193,7 +184,7 @@ mod tests {
         with_cors(
             router,
             CorsConfig {
-                allowed_origins: allowed_origins(),
+                origins: allowed_origins(),
                 ..CorsConfig::default()
             },
         )

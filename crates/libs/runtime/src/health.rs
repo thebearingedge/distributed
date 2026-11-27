@@ -18,24 +18,12 @@ pub struct HealthCheck {
 }
 
 impl HealthCheck {
-    /// Creates a check from a closure producing a fallible future.
-    pub fn new<F, Fut, E>(name: &'static str, check: F) -> Self
-    where
-        F: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<(), E>> + Send + 'static,
-        E: std::fmt::Display,
-    {
-        Self {
-            name,
-            run: Arc::new(move || {
-                let fut = check();
-                Box::pin(async move { fut.await.map_err(|e| e.to_string()) })
-            }),
-        }
-    }
-
-    /// Creates a check whose closure captures a cloned resource (e.g. a
-    /// database pool), cloning it anew for each probe.
+    /// Creates a named check from a resource and a fallible async closure
+    /// over it. The resource is cloned into the closure on every run (e.g. a
+    /// database pool), so the check can share state across probes without
+    /// capturing it directly; pass `()` when the closure needs no resource.
+    /// A failing check reports the `Display` of its error, erased to a
+    /// `String`.
     pub fn with_resource<R, F, Fut, E>(name: &'static str, resource: R, check: F) -> Self
     where
         R: Clone + Send + Sync + 'static,
@@ -43,7 +31,13 @@ impl HealthCheck {
         Fut: Future<Output = Result<(), E>> + Send + 'static,
         E: std::fmt::Display,
     {
-        Self::new(name, move || check(resource.clone()))
+        Self {
+            name,
+            run: Arc::new(move || {
+                let fut = check(resource.clone());
+                Box::pin(async move { fut.await.map_err(|e| e.to_string()) })
+            }),
+        }
     }
 
     /// The check's name, as reported in probe responses.
@@ -78,13 +72,13 @@ mod tests {
 
     #[tokio::test]
     async fn name_is_reported() {
-        let check = HealthCheck::new("postgres", || async { Ok::<(), String>(()) });
+        let check = HealthCheck::with_resource("postgres", (), |()| async { Ok::<(), String>(()) });
         assert_eq!(check.name(), "postgres");
     }
 
     #[tokio::test]
     async fn passing_check_runs_ok() {
-        let check = HealthCheck::new("up", || async { Ok::<(), String>(()) });
+        let check = HealthCheck::with_resource("up", (), |()| async { Ok::<(), String>(()) });
         assert!(check.run().await.is_ok());
     }
 
@@ -99,7 +93,7 @@ mod tests {
             }
         }
 
-        let check = HealthCheck::new("down", || async { Err::<(), Boom>(Boom) });
+        let check = HealthCheck::with_resource("down", (), |()| async { Err::<(), Boom>(Boom) });
         let error = check.run().await.unwrap_err();
         assert_eq!(error, "boom happened");
     }

@@ -47,9 +47,4 @@ mod tests {
 
         assert!(result.is_ok());
     }
-
-    #[test]
-    fn is_named_noop() {
-        assert_eq!(NoopJob.name(), "noop");
-    }
 }

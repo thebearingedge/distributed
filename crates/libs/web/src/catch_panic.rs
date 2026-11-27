@@ -1,5 +1,3 @@
-//! Panic-to-500 middleware: [`crate::catch_panic::with_catch_panic`].
-
 use std::any::Any;
 
 use axum::{
@@ -37,10 +35,7 @@ impl ResponseForPanic for JsonPanicResponse {
 /// error"}`, plus `requestId` under a
 /// [`crate::request_id::scope`] request-id scope). The panic message is logged
 /// at `ERROR` level and never included in the response.
-///
-/// The layer should be applied inside [`crate::middleware::with_http_tracing`]
-/// so the error body carries the request id.
-pub fn with_catch_panic(router: Router) -> Router {
+pub(crate) fn with_catch_panic(router: Router) -> Router {
     router.layer(CatchPanicLayer::custom(JsonPanicResponse))
 }
 

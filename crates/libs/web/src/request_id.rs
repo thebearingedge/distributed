@@ -10,8 +10,8 @@ use axum::{
 use tower_http::request_id::{MakeRequestId, RequestId};
 use uuid::Uuid;
 
-/// The request-ID header used by the middleware in this module and by
-/// [`crate::middleware::with_http_tracing`].
+/// The request-ID header used by the middleware in this module and by the
+/// HTTP tracing layer.
 pub const REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
 /// The maximum length in bytes of an acceptable inbound request ID.
@@ -84,37 +84,12 @@ fn acceptable(value: &HeaderValue) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use axum::{
-        Json, Router, body::Body, http::Request, middleware, response::Response, routing::get,
-    };
-    use http_body_util::BodyExt;
+    use axum::{Json, Router, body::Body, http::Request, middleware, routing::get};
     use serde_json::Value;
-    use tower::ServiceExt;
     use tower_http::request_id::MakeRequestId;
 
     use super::{REQUEST_ID_HEADER, current, sanitize, scope};
-
-    fn request(method: &'static str, uri: &str) -> Request<Body> {
-        Request::builder()
-            .method(method)
-            .uri(uri)
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    fn request_with_id(method: &'static str, uri: &str, id: &str) -> Request<Body> {
-        Request::builder()
-            .method(method)
-            .uri(uri)
-            .header(&REQUEST_ID_HEADER, id)
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    async fn body_json(res: Response) -> Value {
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&bytes).unwrap()
-    }
+    use crate::test_support;
 
     async fn echo_current_id() -> Json<Value> {
         Json(serde_json::json!({ "id": current() }))
@@ -136,8 +111,8 @@ mod tests {
     #[tokio::test]
     async fn current_is_none_for_unscoped_requests() {
         let router = Router::new().route("/id", get(echo_current_id));
-        let res = router.oneshot(request("GET", "/id")).await.unwrap();
-        assert_eq!(body_json(res).await["id"], Value::Null);
+        let res = test_support::get(router, "/id").await;
+        assert_eq!(res.body.expect("the body is JSON")["id"], Value::Null);
     }
 
     #[tokio::test]
@@ -145,11 +120,13 @@ mod tests {
         let router = Router::new()
             .route("/id", get(echo_current_id))
             .layer(middleware::from_fn(scope));
-        let res = router
-            .oneshot(request_with_id("GET", "/id", "abc-123"))
-            .await
-            .unwrap();
-        assert_eq!(body_json(res).await["id"], "abc-123");
+        let res = test_support::get_with_headers(
+            router,
+            "/id",
+            &[(REQUEST_ID_HEADER.as_str(), "abc-123")],
+        )
+        .await;
+        assert_eq!(res.body.expect("the body is JSON")["id"], "abc-123");
     }
 
     #[tokio::test]
@@ -157,8 +134,8 @@ mod tests {
         let router = Router::new()
             .route("/id", get(echo_current_id))
             .layer(middleware::from_fn(scope));
-        let res = router.oneshot(request("GET", "/id")).await.unwrap();
-        assert_eq!(body_json(res).await["id"], Value::Null);
+        let res = test_support::get(router, "/id").await;
+        assert_eq!(res.body.expect("the body is JSON")["id"], Value::Null);
     }
 
     #[tokio::test]
@@ -166,24 +143,30 @@ mod tests {
         let router = Router::new()
             .route("/id", get(echo_request_id))
             .layer(middleware::from_fn(sanitize));
-        let res = router
-            .oneshot(request_with_id("GET", "/id", "gateway-id_XYZ-123"))
-            .await
-            .unwrap();
-        assert_eq!(body_json(res).await["id"], "gateway-id_XYZ-123");
+        let res = test_support::get_with_headers(
+            router,
+            "/id",
+            &[(REQUEST_ID_HEADER.as_str(), "gateway-id_XYZ-123")],
+        )
+        .await;
+        assert_eq!(
+            res.body.expect("the body is JSON")["id"],
+            "gateway-id_XYZ-123"
+        );
     }
 
     #[tokio::test]
     async fn sanitize_drops_overlong_ids() {
-        let long_id = "a".repeat(70);
         let router = Router::new()
             .route("/id", get(echo_request_id))
             .layer(middleware::from_fn(sanitize));
-        let res = router
-            .oneshot(request_with_id("GET", "/id", &long_id))
-            .await
-            .unwrap();
-        assert_eq!(body_json(res).await["id"], Value::Null);
+        let res = test_support::get_with_headers(
+            router,
+            "/id",
+            &[(REQUEST_ID_HEADER.as_str(), "a".repeat(70).as_str())],
+        )
+        .await;
+        assert_eq!(res.body.expect("the body is JSON")["id"], Value::Null);
     }
 
     #[tokio::test]
@@ -191,11 +174,13 @@ mod tests {
         let router = Router::new()
             .route("/id", get(echo_request_id))
             .layer(middleware::from_fn(sanitize));
-        let res = router
-            .oneshot(request_with_id("GET", "/id", "id with spaces"))
-            .await
-            .unwrap();
-        assert_eq!(body_json(res).await["id"], Value::Null);
+        let res = test_support::get_with_headers(
+            router,
+            "/id",
+            &[(REQUEST_ID_HEADER.as_str(), "id with spaces")],
+        )
+        .await;
+        assert_eq!(res.body.expect("the body is JSON")["id"], Value::Null);
     }
 
     #[tokio::test]
@@ -203,14 +188,18 @@ mod tests {
         let router = Router::new()
             .route("/id", get(echo_request_id))
             .layer(middleware::from_fn(sanitize));
-        let res = router.oneshot(request("GET", "/id")).await.unwrap();
-        assert_eq!(body_json(res).await["id"], Value::Null);
+        let res = test_support::get(router, "/id").await;
+        assert_eq!(res.body.expect("the body is JSON")["id"], Value::Null);
     }
 
     #[tokio::test]
     async fn make_request_uuid_v7_makes_a_uuidv7_header() {
         let mut make = super::MakeRequestUuidV7;
-        let req = request("GET", "/id");
+        let req = Request::builder()
+            .method("GET")
+            .uri("/id")
+            .body(Body::empty())
+            .unwrap();
         let id = make.make_request_id(&req).unwrap();
         let value = id.header_value().to_str().unwrap();
         let uuid = value.parse::<uuid::Uuid>().unwrap();
@@ -224,10 +213,12 @@ mod tests {
         let router = Router::new()
             .route("/id", get(echo_request_id))
             .layer(middleware::from_fn(sanitize));
-        let res = router
-            .oneshot(request_with_id("GET", "/id", &max_id))
-            .await
-            .unwrap();
-        assert_eq!(body_json(res).await["id"], max_id);
+        let res = test_support::get_with_headers(
+            router,
+            "/id",
+            &[(REQUEST_ID_HEADER.as_str(), max_id.as_str())],
+        )
+        .await;
+        assert_eq!(res.body.expect("the body is JSON")["id"], max_id);
     }
 }

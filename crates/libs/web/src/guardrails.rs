@@ -1,19 +1,14 @@
-//! Request guardrails composite: [`crate::guardrails::with_guardrails`].
-
 use std::time::Duration;
 
 use axum::Router;
 
 use crate::{
-    body_limit::with_body_limit,
-    catch_panic::with_catch_panic,
-    config::{REQUEST_BODY_LIMIT_DEFAULT_BYTES, REQUEST_TIMEOUT_DEFAULT_SECONDS},
-    timeout::with_request_timeout,
+    body_limit::with_body_limit, catch_panic::with_catch_panic, timeout::with_request_timeout,
 };
 
-/// Limits applied by [`crate::guardrails::with_guardrails`].
+/// Limits applied by the `with_guardrails` layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GuardrailsConfig {
+pub(crate) struct GuardrailsConfig {
     /// Time a request may take to produce a response before it is answered
     /// with `503 Service Unavailable`.
     pub request_timeout: Duration,
@@ -22,27 +17,10 @@ pub struct GuardrailsConfig {
     pub body_limit_bytes: usize,
 }
 
-/// Defaults match the [`crate::config::ApiConfig`] defaults.
-impl Default for GuardrailsConfig {
-    fn default() -> Self {
-        Self {
-            request_timeout: Duration::from_secs(REQUEST_TIMEOUT_DEFAULT_SECONDS),
-            body_limit_bytes: REQUEST_BODY_LIMIT_DEFAULT_BYTES,
-        }
-    }
-}
-
-/// Applies the request guardrails to `router` in a fixed order: from the
-/// outside in, [`crate::catch_panic::with_catch_panic`],
-/// [`crate::timeout::with_request_timeout`], and
-/// [`crate::body_limit::with_body_limit`] wrap every route and fallback
-/// `router` has at call time.
-///
-/// [`crate::stack::with_api_stack`] applies it in the standard position,
-/// inside [`crate::middleware::with_http_tracing`], so error bodies carry the
-/// request id and the trace span records the status. Merge health probes
-/// after the stack so they are not affected.
-pub fn with_guardrails(router: Router, config: GuardrailsConfig) -> Router {
+/// Applies the request guardrails to `router`, from the outside in:
+/// `with_catch_panic`, `with_request_timeout`, and `with_body_limit` wrap
+/// every route and fallback `router` has at call time.
+pub(crate) fn with_guardrails(router: Router, config: GuardrailsConfig) -> Router {
     with_catch_panic(with_request_timeout(
         with_body_limit(router, config.body_limit_bytes),
         config.request_timeout,
@@ -56,18 +34,14 @@ mod tests {
     use axum::{
         Router,
         body::{Body, Bytes},
-        http::{Request, StatusCode},
+        http::StatusCode,
         middleware,
-        response::Response,
         routing::{get, post},
     };
-    use http_body_util::BodyExt;
-    use serde_json::Value;
     use serde_json_assert::assert_json_include;
-    use tower::ServiceExt;
 
     use super::{GuardrailsConfig, with_guardrails};
-    use crate::request_id;
+    use crate::{request_id, test_support};
 
     async fn panics() -> &'static str {
         panic!("secret detail")
@@ -91,35 +65,16 @@ mod tests {
         .layer(middleware::from_fn(request_id::scope))
     }
 
-    fn get_request(uri: &'static str, id: Option<&str>) -> Request<Body> {
-        let mut builder = Request::builder().method("GET").uri(uri);
-        if let Some(id) = id {
-            builder = builder.header(&request_id::REQUEST_ID_HEADER, id);
-        }
-        builder.body(Body::empty()).unwrap()
-    }
-
-    fn post_request(uri: &'static str, body: Body) -> Request<Body> {
-        Request::builder()
-            .method("POST")
-            .uri(uri)
-            .body(body)
-            .unwrap()
-    }
-
-    async fn body_json(res: Response) -> Value {
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&bytes).unwrap()
-    }
-
     #[tokio::test]
     async fn panics_are_answered_with_a_json_500() {
-        let res = router()
-            .oneshot(get_request("/panic", Some("req-1")))
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let body = body_json(res).await;
+        let res = test_support::get_with_headers(
+            router(),
+            "/panic",
+            &[(request_id::REQUEST_ID_HEADER.as_str(), "req-1")],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::INTERNAL_SERVER_ERROR);
+        let body = res.body.expect("the 500 body is JSON");
         assert_json_include!(
             actual: body,
             expected: serde_json::json!({ "error": "internal server error", "requestId": "req-1" })
@@ -128,12 +83,14 @@ mod tests {
 
     #[tokio::test]
     async fn slow_requests_are_answered_with_a_json_503() {
-        let res = router()
-            .oneshot(get_request("/slow", Some("req-1")))
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = body_json(res).await;
+        let res = test_support::get_with_headers(
+            router(),
+            "/slow",
+            &[(request_id::REQUEST_ID_HEADER.as_str(), "req-1")],
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+        let body = res.body.expect("the 503 body is JSON");
         assert_json_include!(
             actual: body,
             expected: serde_json::json!({ "error": "request timed out", "requestId": "req-1" })
@@ -142,21 +99,21 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_bodies_are_rejected_with_413() {
-        let res = router()
-            .oneshot(post_request("/upload", Body::from(b"a".repeat(64))))
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let res =
+            test_support::post_body(router(), "/upload", None, Body::from(b"a".repeat(64))).await;
+        assert_eq!(res.status, StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]
     async fn small_bodies_pass_through() {
-        let res = router()
-            .oneshot(post_request("/upload", Body::from(b"12345678".as_slice())))
-            .await
-            .unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        assert_eq!(bytes.as_ref(), b"8");
+        let res = test_support::post_body(
+            router(),
+            "/upload",
+            None,
+            Body::from(b"12345678".as_slice()),
+        )
+        .await;
+        assert_eq!(res.status, StatusCode::OK);
+        assert_eq!(res.body, Some(serde_json::json!(8)));
     }
 }

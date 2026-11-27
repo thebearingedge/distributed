@@ -11,6 +11,7 @@ mod tests {
         body::Body,
         http::{self, HeaderMap, HeaderValue, Request, StatusCode, header},
     };
+    use clap::Parser;
     use opentelemetry::metrics::NoopMeterProvider;
     use serde_json::json;
     use serde_json_assert::assert_json_include;
@@ -19,8 +20,8 @@ mod tests {
 
     use super::common::todos_api;
     use todos_api::{api::create_todos_api, app_state::AppState};
-    use web::cors::CorsConfig;
-    use web::stack::{StackConfig, with_api_stack};
+    use web::config::ApiConfig;
+    use web::stack::with_api_stack;
     use web::test_support::{get_with_headers, post_json_with_headers};
 
     const ALLOWED_ORIGIN: &str = "http://localhost:5173";
@@ -29,22 +30,15 @@ mod tests {
 
     /// Builds the todos API router with the configured CORS origins on the
     /// standard API layer stack.
-    fn cors_api(postgres: PgPool, allowed_origins: Vec<HeaderValue>) -> Router {
+    fn cors_api(postgres: PgPool) -> Router {
+        let config =
+            ApiConfig::try_parse_from(["todos-api-test", "--cors-allowed-origins", ALLOWED_ORIGIN])
+                .unwrap();
         with_api_stack(
             create_todos_api(AppState::new(postgres)),
-            StackConfig {
-                cors: CorsConfig {
-                    allowed_origins,
-                    ..CorsConfig::default()
-                },
-                ..StackConfig::default()
-            },
+            &config,
             &NoopMeterProvider::new(),
         )
-    }
-
-    fn allowed_origins() -> Vec<HeaderValue> {
-        vec![HeaderValue::from_static(ALLOWED_ORIGIN)]
     }
 
     fn preflight_for(origin: &str, request_method: &str) -> Request<Body> {
@@ -83,12 +77,7 @@ mod tests {
 
     #[sqlx::test]
     async fn preflight_from_an_allowed_origin_is_answered(postgres: PgPool) {
-        let (status, headers) = preflight_parts(
-            cors_api(postgres, allowed_origins()),
-            ALLOWED_ORIGIN,
-            "POST",
-        )
-        .await;
+        let (status, headers) = preflight_parts(cors_api(postgres), ALLOWED_ORIGIN, "POST").await;
 
         assert!(status.is_success());
         assert_eq!(
@@ -99,8 +88,7 @@ mod tests {
 
     #[sqlx::test]
     async fn preflight_for_a_method_beyond_the_default_set_is_answered(postgres: PgPool) {
-        let (status, headers) =
-            preflight_parts(cors_api(postgres, allowed_origins()), ALLOWED_ORIGIN, "PUT").await;
+        let (status, headers) = preflight_parts(cors_api(postgres), ALLOWED_ORIGIN, "PUT").await;
 
         assert!(status.is_success());
         assert_eq!(
@@ -111,12 +99,7 @@ mod tests {
 
     #[sqlx::test]
     async fn preflight_from_an_unlisted_origin_has_no_allow_origin_header(postgres: PgPool) {
-        let (status, headers) = preflight_parts(
-            cors_api(postgres, allowed_origins()),
-            UNLISTED_ORIGIN,
-            "POST",
-        )
-        .await;
+        let (status, headers) = preflight_parts(cors_api(postgres), UNLISTED_ORIGIN, "POST").await;
 
         assert!(status.is_success());
         assert!(headers.get("access-control-allow-origin").is_none());
@@ -125,7 +108,7 @@ mod tests {
     #[sqlx::test(migrator = "todos::MIGRATOR")]
     async fn post_from_an_allowed_origin_exposes_the_location_header(postgres: PgPool) {
         let parts = post_json_with_headers(
-            cors_api(postgres, allowed_origins()),
+            cors_api(postgres),
             "/v1/todos",
             &[("origin", ALLOWED_ORIGIN)],
             &json!({ "task": "write some rust!" }),
@@ -147,7 +130,7 @@ mod tests {
     #[sqlx::test]
     async fn validation_errors_carry_the_allow_origin_header(postgres: PgPool) {
         let parts = post_json_with_headers(
-            cors_api(postgres, allowed_origins()),
+            cors_api(postgres),
             "/v1/todos",
             &[("origin", ALLOWED_ORIGIN)],
             &json!({ "task": "" }),
@@ -167,12 +150,8 @@ mod tests {
 
     #[sqlx::test]
     async fn unknown_routes_carry_the_allow_origin_header(postgres: PgPool) {
-        let parts = get_with_headers(
-            cors_api(postgres, allowed_origins()),
-            "/nope",
-            &[("origin", ALLOWED_ORIGIN)],
-        )
-        .await;
+        let parts =
+            get_with_headers(cors_api(postgres), "/nope", &[("origin", ALLOWED_ORIGIN)]).await;
 
         assert_eq!(parts.status, StatusCode::NOT_FOUND);
         assert_eq!(parts.content_type, "application/json");

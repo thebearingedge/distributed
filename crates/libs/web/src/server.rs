@@ -7,7 +7,10 @@ use runtime::run_error::RunError;
 use runtime::shutdown::Shutdown;
 
 /// Supervisor task name for an API's HTTP server.
-pub const HTTP_SERVER_TASK: &str = "http_server";
+pub(crate) const HTTP_SERVER_TASK: &str = "http_server";
+
+/// Supervisor task name for a worker's probe server.
+pub(crate) const PROBE_SERVER_TASK: &str = "probe_server";
 
 /// Serves `router` on `listener` until `shutdown` is triggered and
 /// `drain_delay` has elapsed (readiness reports shutting down meanwhile), then
@@ -18,7 +21,7 @@ pub const HTTP_SERVER_TASK: &str = "http_server";
 ///
 /// Returns a retryable [`runtime::run_error::RunError`] when the server fails
 /// with an I/O error.
-pub async fn serve(
+pub(crate) async fn serve(
     listener: TcpListener,
     router: Router,
     shutdown: Shutdown,
@@ -52,12 +55,7 @@ mod tests {
 
     use runtime::shutdown::Shutdown;
 
-    use super::{HTTP_SERVER_TASK, graceful_shutdown, serve};
-
-    #[test]
-    fn http_server_task_name() {
-        assert_eq!(HTTP_SERVER_TASK, "http_server");
-    }
+    use super::{graceful_shutdown, serve};
 
     async fn bind_listener() -> TcpListener {
         TcpListener::bind("127.0.0.1:0")

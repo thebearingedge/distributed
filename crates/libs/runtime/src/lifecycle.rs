@@ -36,7 +36,7 @@ impl RunOutcome {
 
 /// How the final flush ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FlushOutcome {
+pub(crate) enum FlushOutcome {
     /// The flush completed successfully.
     Flushed,
     /// The flush returned an error or its blocking task panicked.
@@ -47,7 +47,7 @@ pub enum FlushOutcome {
 
 /// Runs the blocking `flush` on the blocking thread pool, waiting at most
 /// `timeout`. Failures and timeouts are logged as warnings and never panic.
-pub async fn flush_within<F, E>(timeout: Duration, flush: F) -> FlushOutcome
+pub(crate) async fn flush_within<F, E>(timeout: Duration, flush: F) -> FlushOutcome
 where
     F: FnOnce() -> Result<(), E> + Send + 'static,
     E: Display + Send + 'static,
@@ -74,14 +74,13 @@ where
 /// timed out. Returning would let the Tokio runtime wait on that work
 /// indefinitely.
 #[must_use]
-pub const fn must_exit_immediately(outcome: RunOutcome, flush: FlushOutcome) -> bool {
+pub(crate) const fn must_exit_immediately(outcome: RunOutcome, flush: FlushOutcome) -> bool {
     outcome.deadline_exceeded || matches!(flush, FlushOutcome::TimedOut)
 }
 
-/// Ends a process run: flushes telemetry with
-/// [`crate::lifecycle::flush_within`], then returns the [`ExitCode`] for
-/// `outcome.status`. A failed flush is logged and never changes the status.
-/// When [`crate::lifecycle::must_exit_immediately`] holds, the process exits
+/// Ends a process run: flushes telemetry with `flush_within`, then returns
+/// the [`ExitCode`] for `outcome.status`. A failed flush is logged and never
+/// changes the status. When `must_exit_immediately` holds, the process exits
 /// with the status code from inside this function instead of returning.
 pub async fn finish<F, E>(outcome: RunOutcome, flush_timeout: Duration, flush: F) -> ExitCode
 where

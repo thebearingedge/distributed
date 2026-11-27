@@ -24,7 +24,7 @@ use crate::request_id::{MakeRequestUuidV7, REQUEST_ID_HEADER, sanitize, scope};
 /// (empty when absent), and the incoming parent context is linked from the
 /// request headers via `telemetry::propagation::link_parent`.
 #[derive(Clone, Copy)]
-pub struct HttpMakeSpan;
+pub(crate) struct HttpMakeSpan;
 
 impl<B> MakeSpan<B> for HttpMakeSpan {
     fn make_span(&mut self, req: &Request<B>) -> Span {
@@ -60,7 +60,7 @@ impl<B> MakeSpan<B> for HttpMakeSpan {
 /// `OnResponse` implementation that records the response status into the
 /// span's `http.response.status_code` field.
 #[derive(Clone, Copy)]
-pub struct HttpOnResponse;
+pub(crate) struct HttpOnResponse;
 
 impl<B> OnResponse<B> for HttpOnResponse {
     fn on_response(self, response: &Response<B>, _latency: Duration, span: &Span) {
@@ -78,7 +78,7 @@ impl<B> OnResponse<B> for HttpOnResponse {
 /// the OTel-convention span from [`HttpMakeSpan`], recording the status code
 /// on response via [`HttpOnResponse`] and logging failures at ERROR level.
 /// Requests and responses are not logged.
-pub fn with_http_tracing(router: Router) -> Router {
+pub(crate) fn with_http_tracing(router: Router) -> Router {
     router.layer(
         ServiceBuilder::new()
             .layer(middleware::from_fn(sanitize))
@@ -97,13 +97,10 @@ pub fn with_http_tracing(router: Router) -> Router {
 
 #[cfg(test)]
 mod tests {
-    use axum::{Router, body::Body, http::Request, response::Response, routing::get};
-    use http_body_util::BodyExt;
-    use serde_json::Value;
-    use tower::ServiceExt;
+    use axum::{Router, routing::get};
 
     use super::with_http_tracing;
-    use crate::{fallback::with_json_fallbacks, request_id::REQUEST_ID_HEADER};
+    use crate::{fallback::with_json_fallbacks, request_id::REQUEST_ID_HEADER, test_support};
 
     fn router() -> Router {
         with_http_tracing(with_json_fallbacks(
@@ -111,79 +108,65 @@ mod tests {
         ))
     }
 
-    fn request(method: &'static str, uri: &str) -> Request<Body> {
-        Request::builder()
-            .method(method)
-            .uri(uri)
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    fn request_with_id(method: &'static str, uri: &str, id: &str) -> Request<Body> {
-        Request::builder()
-            .method(method)
-            .uri(uri)
-            .header(&REQUEST_ID_HEADER, id)
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    async fn body_json(res: Response) -> Value {
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&bytes).unwrap()
-    }
-
-    fn response_request_id(res: &Response) -> String {
-        res.headers()
-            .get(&REQUEST_ID_HEADER)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned()
-    }
-
     #[tokio::test]
     async fn requests_without_a_header_get_a_fresh_uuid() {
-        let res = router().oneshot(request("GET", "/things")).await.unwrap();
-        let id = response_request_id(&res);
+        let res = test_support::get(router(), "/things").await;
+        let id = res
+            .header(REQUEST_ID_HEADER.as_str())
+            .expect("x-request-id");
         assert!(id.parse::<uuid::Uuid>().is_ok(), "not a UUID: {id}");
     }
 
     #[tokio::test]
     async fn valid_inbound_ids_are_echoed_unchanged() {
         let inbound = "gateway-id_XYZ-123";
-        let res = router()
-            .oneshot(request_with_id("GET", "/things", inbound))
-            .await
-            .unwrap();
-        assert_eq!(response_request_id(&res), inbound);
+        let res = test_support::get_with_headers(
+            router(),
+            "/things",
+            &[(REQUEST_ID_HEADER.as_str(), inbound)],
+        )
+        .await;
+        assert_eq!(
+            res.header(REQUEST_ID_HEADER.as_str()).as_deref(),
+            Some(inbound)
+        );
     }
 
     #[tokio::test]
     async fn overlong_inbound_ids_are_replaced_with_a_fresh_uuid() {
-        let res = router()
-            .oneshot(request_with_id("GET", "/things", &"a".repeat(70)))
-            .await
-            .unwrap();
-        let id = response_request_id(&res);
+        let res = test_support::get_with_headers(
+            router(),
+            "/things",
+            &[(REQUEST_ID_HEADER.as_str(), "a".repeat(70).as_str())],
+        )
+        .await;
+        let id = res
+            .header(REQUEST_ID_HEADER.as_str())
+            .expect("x-request-id");
         assert!(id.parse::<uuid::Uuid>().is_ok(), "not a UUID: {id}");
     }
 
     #[tokio::test]
     async fn inbound_ids_with_unacceptable_bytes_are_replaced_with_a_fresh_uuid() {
-        let res = router()
-            .oneshot(request_with_id("GET", "/things", "id with spaces"))
-            .await
-            .unwrap();
-        let id = response_request_id(&res);
+        let res = test_support::get_with_headers(
+            router(),
+            "/things",
+            &[(REQUEST_ID_HEADER.as_str(), "id with spaces")],
+        )
+        .await;
+        let id = res
+            .header(REQUEST_ID_HEADER.as_str())
+            .expect("x-request-id");
         assert!(id.parse::<uuid::Uuid>().is_ok(), "not a UUID: {id}");
     }
 
     #[tokio::test]
     async fn not_found_bodies_carry_the_response_request_id() {
-        let res = router().oneshot(request("GET", "/nope")).await.unwrap();
-        let id = response_request_id(&res);
-        let body = body_json(res).await;
+        let res = test_support::get(router(), "/nope").await;
+        let id = res
+            .header(REQUEST_ID_HEADER.as_str())
+            .expect("x-request-id");
+        let body = res.body.expect("the 404 body is JSON");
         assert_eq!(body["requestId"], id);
     }
 }

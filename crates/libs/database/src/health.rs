@@ -12,7 +12,7 @@ pub const POSTGRES_HEALTH_CHECK: &str = "postgres";
 /// # Errors
 ///
 /// Returns a [`DbError`] if database is unreachable.
-pub async fn ping(pool: PgPool) -> Result<(), DbError> {
+pub(crate) async fn ping(pool: PgPool) -> Result<(), DbError> {
     sqlx::query("select 1")
         .execute(&pool)
         .await
@@ -20,7 +20,7 @@ pub async fn ping(pool: PgPool) -> Result<(), DbError> {
         .db_context("pinging database")
 }
 
-/// A readiness check that pings the given connection pool ([`ping`]).
+/// A readiness check that pings the given connection pool (`ping`).
 #[must_use]
 pub fn check(pool: &PgPool) -> HealthCheck {
     HealthCheck::with_resource(POSTGRES_HEALTH_CHECK, pool.clone(), ping)
