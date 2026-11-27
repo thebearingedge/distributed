@@ -4,11 +4,12 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rdkafka::Message;
-use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
+use rdkafka::consumer::{CommitMode, Consumer, ConsumerContext, StreamConsumer};
 use rdkafka::error::{KafkaError, KafkaResult, RDKafkaErrorCode};
 use rdkafka::message::BorrowedMessage;
+use rdkafka::{ClientContext, Message};
 use serde::de::DeserializeOwned;
+use tokio::time::Instant;
 use tracing::Instrument;
 
 use runtime::heartbeat::Heartbeat;
@@ -18,6 +19,7 @@ use runtime::shutdown::Shutdown;
 use crate::config::{KafkaConfig, KafkaConsumerConfig};
 use crate::headers;
 use crate::kafka_error::{ConsumeError, DecodeError, KafkaClientError, is_fatal};
+use crate::metrics::{ConsumerInstruments, ConsumerMetrics, LagSnapshot};
 
 /// Partition and offset a delivered message came from.
 #[derive(Clone, Debug)]
@@ -63,10 +65,26 @@ pub trait MessageHandler<T>: Send + Sync {
 /// storing the failing message's offset, so it is redelivered. A fatal
 /// librdkafka error stops consumption; recreate the client to continue.
 pub struct KafkaConsumer<T> {
-    inner: Arc<StreamConsumer>,
+    inner: Arc<StreamConsumer<KafkaConsumerContext>>,
     topic: String,
+    metrics: ConsumerInstruments,
     _marker: PhantomData<fn() -> T>,
 }
+
+/// The librdkafka client context of a [`KafkaConsumer`]: feeds
+/// statistics reports into the consumer's lag snapshot and keeps the
+/// default logging and error handling.
+struct KafkaConsumerContext {
+    lag: Arc<LagSnapshot>,
+}
+
+impl ClientContext for KafkaConsumerContext {
+    fn stats_raw(&self, statistics: &[u8]) {
+        self.lag.update(statistics);
+    }
+}
+
+impl ConsumerContext for KafkaConsumerContext {}
 
 impl<T> std::fmt::Debug for KafkaConsumer<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -78,6 +96,11 @@ impl<T> std::fmt::Debug for KafkaConsumer<T> {
 
 impl<T: DeserializeOwned + Send> KafkaConsumer<T> {
     /// Creates the stream consumer and subscribes it to `topic`.
+    ///
+    /// Consumption, processing, skipped messages, and per-partition lag
+    /// (from librdkafka statistics every
+    /// `KAFKA_CONSUMER_STATISTICS_INTERVAL_SECONDS`) are recorded on
+    /// `metrics`.
     ///
     /// # Errors
     ///
@@ -93,11 +116,18 @@ impl<T: DeserializeOwned + Send> KafkaConsumer<T> {
         kafka: &KafkaConfig,
         consumer: &KafkaConsumerConfig,
         topic: impl Into<String>,
+        metrics: &ConsumerMetrics,
     ) -> Result<Self, KafkaClientError> {
         let topic = topic.into();
         let mut config = kafka.client_config();
         consumer.apply(&mut config);
-        let created: StreamConsumer = config.create().map_err(KafkaClientError::Config)?;
+        let instruments = metrics.instruments(&topic, &consumer.kafka_consumer_group_id);
+        let context = KafkaConsumerContext {
+            lag: instruments.lag(),
+        };
+        let created: StreamConsumer<KafkaConsumerContext> = config
+            .create_with_context(context)
+            .map_err(KafkaClientError::Config)?;
         created
             .subscribe(&[topic.as_str()])
             .map_err(|source| KafkaClientError::Subscribe {
@@ -107,6 +137,7 @@ impl<T: DeserializeOwned + Send> KafkaConsumer<T> {
         Ok(Self {
             inner: Arc::new(created),
             topic,
+            metrics: instruments,
             _marker: PhantomData,
         })
     }
@@ -123,7 +154,10 @@ impl<T: DeserializeOwned + Send> KafkaConsumer<T> {
     /// consumption; its [`ConsumeError`] classifies as a retryable
     /// [`RunError`], the handler error as the handler's own classification.
     /// The heartbeat is beaten on every loop iteration, on idle ticks, and
-    /// while the handler runs.
+    /// while the handler runs. Every received message counts on
+    /// `messaging.client.consumed.messages`; handled messages record
+    /// `messaging.process.duration`, and skipped ones
+    /// `messaging.kafka.consumer.skipped.messages`.
     ///
     /// # Errors
     ///
@@ -152,6 +186,7 @@ impl<T: DeserializeOwned + Send> KafkaConsumer<T> {
                             tracing::warn!(%error, "kafka consumer error");
                         }
                         Ok(message) => {
+                            self.metrics.record_consumed(message.partition());
                             if let Err(error) = self.process(message, handler, heartbeat).await {
                                 break Err(error);
                             }
@@ -183,11 +218,11 @@ impl<T: DeserializeOwned + Send> KafkaConsumer<T> {
         let span = tracing::info_span!(
             "kafka.process",
             otel.kind = "consumer",
-            messaging.system = "kafka",
+            messaging.system.name = "kafka",
             messaging.operation.type = "process",
             messaging.destination.name = %self.topic,
-            messaging.destination.partition.id = partition,
-            messaging.kafka.offset = offset,
+            messaging.destination.partition.id = %partition,
+            kafka.offset = offset,
         );
         headers::link_parent(&span, message.headers());
         let decoded = decode::<T>(message.payload());
@@ -198,11 +233,14 @@ impl<T: DeserializeOwned + Send> KafkaConsumer<T> {
                     value,
                     meta: meta.clone(),
                 };
-                if let Err(source) = heartbeat
+                let started = Instant::now();
+                let result = heartbeat
                     .beat_while(handler.handle(delivery))
                     .instrument(span)
-                    .await
-                {
+                    .await;
+                self.metrics
+                    .record_processed(partition, started.elapsed(), result.as_ref().err());
+                if let Err(source) = result {
                     return Err(ConsumeError::Handler {
                         partition,
                         offset,
@@ -210,11 +248,16 @@ impl<T: DeserializeOwned + Send> KafkaConsumer<T> {
                     });
                 }
             }
-            Err(DecodeError::EmptyPayload) => {
-                tracing::debug!(partition, offset, "skipping empty payload");
-            }
-            Err(error @ DecodeError::Json(_)) => {
-                tracing::warn!(partition, offset, %error, "skipping undecodable message");
+            Err(error) => {
+                self.metrics.record_skipped(partition, &error);
+                match error {
+                    DecodeError::EmptyPayload => {
+                        tracing::debug!(partition, offset, "skipping empty payload");
+                    }
+                    DecodeError::Json(_) => {
+                        tracing::warn!(partition, offset, %error, "skipping undecodable message");
+                    }
+                }
             }
         }
         self.store_or_warn(&meta);
@@ -254,7 +297,7 @@ fn decode<T: DeserializeOwned>(payload: Option<&[u8]>) -> Result<T, DecodeError>
 ///
 /// [`ConsumeError::Commit`] when the final commit fails, and
 /// [`ConsumeError::CloseTask`] when the blocking task panics or is cancelled.
-async fn close(consumer: Arc<StreamConsumer>) -> Result<(), ConsumeError> {
+async fn close(consumer: Arc<StreamConsumer<KafkaConsumerContext>>) -> Result<(), ConsumeError> {
     match tokio::task::spawn_blocking(move || {
         let result = commit_on_shutdown(&consumer);
         drop(consumer);
@@ -270,7 +313,7 @@ async fn close(consumer: Arc<StreamConsumer>) -> Result<(), ConsumeError> {
 
 /// Commits the consumer's stored offsets synchronously, tolerating the
 /// nothing-to-commit and assignment-lost outcomes.
-fn commit_on_shutdown(consumer: &StreamConsumer) -> KafkaResult<()> {
+fn commit_on_shutdown(consumer: &StreamConsumer<KafkaConsumerContext>) -> KafkaResult<()> {
     match consumer.commit_consumer_state(CommitMode::Sync) {
         Ok(()) | Err(KafkaError::ConsumerCommit(RDKafkaErrorCode::NoOffset)) => Ok(()),
         Err(KafkaError::ConsumerCommit(RDKafkaErrorCode::AssignmentLost)) => {
@@ -287,6 +330,7 @@ mod tests {
 
     use async_trait::async_trait;
     use clap::Parser;
+    use opentelemetry::metrics::NoopMeterProvider;
     use serde::Deserialize;
     use serde_json::Value;
 
@@ -339,8 +383,13 @@ mod tests {
             let consumer =
                 KafkaConsumerConfig::try_parse_from(["test", "--kafka-consumer-group-id", group])
                     .expect("consumer config parses");
-            let consumer: KafkaConsumer<Value> =
-                KafkaConsumer::new(kafka, &consumer, topic).expect("consumer builds");
+            let consumer: KafkaConsumer<Value> = KafkaConsumer::new(
+                kafka,
+                &consumer,
+                topic,
+                &ConsumerMetrics::new(&NoopMeterProvider::new()),
+            )
+            .expect("consumer builds");
             let shutdown = Shutdown::new();
             let heartbeat = Heartbeat::new(Duration::from_secs(1));
             assert_send(consumer.run(&NopHandler, &shutdown, &heartbeat));

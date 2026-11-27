@@ -18,10 +18,12 @@ use crate::supervisor::supervise;
 use crate::worker::{Worker, WorkerContext};
 
 /// Initializes telemetry, installs shutdown signal handlers (a second signal
-/// exits 143 immediately), binds the probe listener, and supervises the worker
-/// and its probe server on a [`runtime::supervisor::Supervisor`] with the
-/// shutdown deadline from `config.lifecycle`, ending with a bounded telemetry
-/// flush. Returns the process [`ExitCode`].
+/// exits 143 immediately), binds the probe listener, hands the worker the
+/// telemetry meter provider through its [`crate::WorkerContext`], and
+/// supervises the worker and its probe server on a
+/// [`runtime::supervisor::Supervisor`] with the shutdown deadline from
+/// `config.lifecycle`, ending with a bounded telemetry flush. Returns the
+/// process [`ExitCode`].
 ///
 /// `service_name` is the default `service.name`, which `OTEL_SERVICE_NAME`
 /// overrides.
@@ -67,7 +69,11 @@ pub async fn launch<W: Worker + 'static>(
     };
 
     let heartbeat = Heartbeat::new(config.heartbeat_stale_after());
-    let context = WorkerContext::new(shutdown.clone(), heartbeat.clone());
+    let context = WorkerContext::new(
+        shutdown.clone(),
+        heartbeat.clone(),
+        Arc::new(telemetry.meter_provider().clone()),
+    );
 
     let router = probes_router(&heartbeat, config.health_check_timeout(), shutdown.clone());
     let server = serve(listener, router, shutdown.clone(), lifecycle.drain_delay());

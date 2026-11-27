@@ -1,8 +1,8 @@
 //! Composable runtime for run-to-completion Kubernetes Job processes: the
-//! [`crate::Job`] contract, the [`crate::runner::run()`] and
-//! [`crate::runner::run_within()`] functions that map outcomes to exit
-//! statuses, the [`crate::launch::launch()`] composition root, and the
-//! placeholder [`crate::NoopJob`].
+//! [`crate::Job`] contract and the [`crate::JobContext`] it runs with, the
+//! [`crate::runner::run()`] and [`crate::runner::run_within()`] functions
+//! that map outcomes to exit statuses, the [`crate::launch::launch()`]
+//! composition root, and the placeholder [`crate::NoopJob`].
 
 /// The job contract.
 pub mod job;
@@ -18,7 +18,7 @@ pub mod noop;
 /// ([`crate::runner::run_within()`]).
 pub mod runner;
 
-pub use job::Job;
+pub use job::{Job, JobContext};
 pub use launch::launch;
 pub use noop::NoopJob;
 pub use runner::{run, run_within};

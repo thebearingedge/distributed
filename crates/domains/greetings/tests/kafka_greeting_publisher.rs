@@ -10,14 +10,16 @@ use uuid::Uuid;
 
 use greetings::{GREETINGS_TOPIC, KafkaGreetingPublisher, SendGreetingInteractor};
 use kafka::config::{
-    AutoOffsetReset, KAFKA_PRODUCER_DELIVERY_TIMEOUT_DEFAULT_SECONDS,
-    KAFKA_PRODUCER_FLUSH_TIMEOUT_DEFAULT_SECONDS, KafkaConfig, KafkaConsumerConfig,
-    KafkaProducerConfig,
+    AutoOffsetReset, KAFKA_CONSUMER_STATISTICS_INTERVAL_DEFAULT_SECONDS,
+    KAFKA_PRODUCER_DELIVERY_TIMEOUT_DEFAULT_SECONDS, KAFKA_PRODUCER_FLUSH_TIMEOUT_DEFAULT_SECONDS,
+    KafkaConfig, KafkaConsumerConfig, KafkaProducerConfig,
 };
 use kafka::consumer::{Delivery, KafkaConsumer, MessageHandler};
+use kafka::metrics::{ConsumerMetrics, ProducerMetrics};
 use runtime::heartbeat::Heartbeat;
 use runtime::run_error::RunError;
 use runtime::shutdown::Shutdown;
+use telemetry::test_support::MetricsHarness;
 
 fn kafka_config() -> KafkaConfig {
     KafkaConfig {
@@ -54,9 +56,14 @@ impl MessageHandler<Value> for Capture {
 
 #[tokio::test]
 async fn publishes_greetings_as_json_on_the_greetings_topic() {
+    let harness = MetricsHarness::default();
     let kafka = kafka_config();
-    let publisher =
-        KafkaGreetingPublisher::connect(&kafka, &producer_config()).expect("publisher connects");
+    let publisher = KafkaGreetingPublisher::connect(
+        &kafka,
+        &producer_config(),
+        &ProducerMetrics::new(harness.provider()),
+    )
+    .expect("publisher connects");
     let interactor = SendGreetingInteractor::new(Arc::new(publisher));
 
     let greeting = interactor
@@ -69,8 +76,11 @@ async fn publishes_greetings_as_json_on_the_greetings_topic() {
         &KafkaConsumerConfig {
             kafka_consumer_group_id: format!("test-{}", Uuid::now_v7()),
             kafka_consumer_auto_offset_reset: AutoOffsetReset::Earliest,
+            kafka_consumer_statistics_interval_seconds:
+                KAFKA_CONSUMER_STATISTICS_INTERVAL_DEFAULT_SECONDS,
         },
         GREETINGS_TOPIC,
+        &ConsumerMetrics::new(harness.provider()),
     )
     .expect("consumer builds");
 
@@ -100,4 +110,13 @@ async fn publishes_greetings_as_json_on_the_greetings_topic() {
         json!({ "id": greeting.id.to_string(), "message": "hello from test" })
     );
     assert_eq!(key.as_deref(), Some(greeting.id.as_bytes().as_slice()));
+
+    let sent = harness.u64_sum("messaging.client.sent.messages");
+    assert!(sent.iter().any(|point| {
+        point
+            .attribute("messaging.destination.name")
+            .map(|value| value.as_str())
+            .as_deref()
+            == Some(GREETINGS_TOPIC)
+    }));
 }

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use kafka::config::{KafkaConfig, KafkaConsumerConfig};
 use kafka::consumer::{Delivery, KafkaConsumer, MessageHandler};
 use kafka::kafka_error::{ConsumeError, KafkaClientError};
+use kafka::metrics::ConsumerMetrics;
 use runtime::heartbeat::Heartbeat;
 use runtime::run_error::RunError;
 use runtime::shutdown::Shutdown;
@@ -22,6 +23,7 @@ pub struct KafkaGreetingSubscriber {
 
 impl KafkaGreetingSubscriber {
     /// Creates the stream consumer and subscribes it to [`GREETINGS_TOPIC`].
+    /// Consumption is recorded on `metrics`.
     ///
     /// # Errors
     ///
@@ -35,9 +37,10 @@ impl KafkaGreetingSubscriber {
     pub fn connect(
         kafka: &KafkaConfig,
         consumer: &KafkaConsumerConfig,
+        metrics: &ConsumerMetrics,
     ) -> Result<Self, KafkaClientError> {
         Ok(Self {
-            consumer: KafkaConsumer::new(kafka, consumer, GREETINGS_TOPIC)?,
+            consumer: KafkaConsumer::new(kafka, consumer, GREETINGS_TOPIC, metrics)?,
         })
     }
 

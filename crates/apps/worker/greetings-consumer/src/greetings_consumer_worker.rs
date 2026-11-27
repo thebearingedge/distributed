@@ -4,6 +4,7 @@
 use async_trait::async_trait;
 use greetings::{KafkaGreetingSubscriber, ReceiveGreetingInteractor};
 use kafka::config::{KafkaConfig, KafkaConsumerConfig};
+use kafka::metrics::ConsumerMetrics;
 use runtime::run_error::RunError;
 use worker::{Worker, WorkerContext};
 
@@ -29,13 +30,17 @@ impl Worker for GreetingsConsumerWorker {
     }
 
     async fn run(&self, context: WorkerContext) -> Result<(), RunError> {
-        KafkaGreetingSubscriber::connect(&self.kafka, &self.consumer)?
-            .run(
-                ReceiveGreetingInteractor,
-                context.shutdown(),
-                context.heartbeat(),
-            )
-            .await
-            .map_err(RunError::from)
+        KafkaGreetingSubscriber::connect(
+            &self.kafka,
+            &self.consumer,
+            &ConsumerMetrics::new(context.meter_provider()),
+        )?
+        .run(
+            ReceiveGreetingInteractor,
+            context.shutdown(),
+            context.heartbeat(),
+        )
+        .await
+        .map_err(RunError::from)
     }
 }
