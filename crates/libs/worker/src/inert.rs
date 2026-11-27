@@ -28,8 +28,10 @@ impl Worker for InertWorker {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
 
+    use opentelemetry::metrics::NoopMeterProvider;
     use tokio::time::timeout;
 
     use runtime::heartbeat::Heartbeat;
@@ -44,7 +46,7 @@ mod tests {
         let shutdown = Shutdown::new();
         shutdown.trigger();
         let heartbeat = Heartbeat::new(Duration::from_secs(30));
-        let context = WorkerContext::new(shutdown, heartbeat);
+        let context = WorkerContext::new(shutdown, heartbeat, Arc::new(NoopMeterProvider::new()));
 
         let result = timeout(Duration::from_secs(1), async {
             InertWorker.run(context).await
@@ -59,7 +61,11 @@ mod tests {
     async fn keeps_the_heartbeat_fresh() {
         let shutdown = Shutdown::new();
         let heartbeat = Heartbeat::new(Duration::from_secs(30));
-        let context = WorkerContext::new(shutdown.clone(), heartbeat.clone());
+        let context = WorkerContext::new(
+            shutdown.clone(),
+            heartbeat.clone(),
+            Arc::new(NoopMeterProvider::new()),
+        );
 
         let handle = tokio::spawn(async move { InertWorker.run(context).await });
 
@@ -77,7 +83,7 @@ mod tests {
     async fn pends_while_not_shut_down() {
         let shutdown = Shutdown::new();
         let heartbeat = Heartbeat::new(Duration::from_secs(30));
-        let context = WorkerContext::new(shutdown, heartbeat);
+        let context = WorkerContext::new(shutdown, heartbeat, Arc::new(NoopMeterProvider::new()));
 
         let result = timeout(Duration::from_secs(300), async {
             InertWorker.run(context).await

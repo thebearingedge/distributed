@@ -9,6 +9,7 @@ runtime.workspace = true
 telemetry.workspace = true
 
 async-trait.workspace = true
+opentelemetry.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

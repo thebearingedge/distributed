@@ -20,6 +20,8 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+telemetry = { workspace = true, features = ["test-support"] }
+
 opentelemetry_sdk.workspace = true
 uuid.workspace = true
 

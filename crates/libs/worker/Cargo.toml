@@ -12,6 +12,7 @@ web.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 clap.workspace = true
+opentelemetry.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

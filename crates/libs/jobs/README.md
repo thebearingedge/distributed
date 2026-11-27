@@ -5,13 +5,17 @@ Composable runtime for run-to-completion Kubernetes Job processes: the
 [`run_within`](src/runner.rs) functions that map the job's outcome to an exit
 status, and the [`launch`](src/launch.rs) composition root. One job per
 binary; the crate has no HTTP surface and does not depend on axum or `web`.
+It depends on the `opentelemetry` API crate for the meter provider it hands
+to the job.
 Jobs should be idempotent, because a retried Job runs again from the start.
 
 ## Contents
 
 - [`Job`](src/job.rs) — the contract: a static `name` plus
-  `run(shutdown)` that classifies failures as retryable or permanent via
-  `runtime::RunError`.
+  `run(context)` that classifies failures as retryable or permanent via
+  `runtime::RunError`. The [`JobContext`](src/job.rs) carries the shutdown
+  handle (`context.shutdown()`) and the meter provider
+  (`context.meter_provider()`) for instrumentation such as `kafka::metrics`.
 - [`run`](src/runner.rs) — runs the job and maps the outcome: `Ok` gives
   success even when shutdown was triggered, an error after shutdown gives
   interrupted, and any other error gives the error's own classification.
@@ -22,6 +26,7 @@ Jobs should be idempotent, because a retried Job runs again from the start.
   run for any length of time.
 - [`launch`](src/launch.rs) — process composition root: initializes telemetry,
   installs shutdown signal handlers (a second signal exits 143 immediately),
+  hands the job the telemetry meter provider through its `JobContext`,
   runs the job bounded by the deadline from
   [`runtime::config::LifecycleConfig`](../../runtime/src/config.rs), ends with
   a telemetry flush bounded by the flush timeout, and returns the process
@@ -70,14 +75,14 @@ podFailurePolicy:
 
 ## Shutdown
 
-The job receives a `runtime::Shutdown` handle and is expected to observe it,
-returning promptly once it is triggered. The runner neither races nor aborts
-the job; an error returned after shutdown is reported as interrupted (exit
-code 143), while `Ok` stays success. Once shutdown is triggered, the job has
-the deadline (`SHUTDOWN_DRAIN_SECONDS + SHUTDOWN_TIMEOUT_SECONDS`) to return;
-a job that does not is dropped, and the process exits 143 after the bounded
-telemetry flush. A second `SIGTERM`/`SIGINT` exits 143 immediately, skipping
-the drain, the deadline, and the flush.
+The job receives a `JobContext` whose `shutdown()` handle it is expected to
+observe, returning promptly once it is triggered. The runner neither races nor
+aborts the job; an error returned after shutdown is reported as interrupted
+(exit code 143), while `Ok` stays success. Once shutdown is triggered, the job
+has the deadline (`SHUTDOWN_DRAIN_SECONDS + SHUTDOWN_TIMEOUT_SECONDS`) to
+return; a job that does not is dropped, and the process exits 143 after the
+bounded telemetry flush. A second `SIGTERM`/`SIGINT` exits 143 immediately,
+skipping the drain, the deadline, and the flush.
 
 ## Composing a job
 

@@ -2,14 +2,13 @@
 
 use std::time::Duration;
 
-use crate::job::Job;
+use crate::job::{Job, JobContext};
 use runtime::deadline::within_deadline;
 use runtime::exit_status::ExitStatus;
 use runtime::lifecycle::RunOutcome;
-use runtime::shutdown::Shutdown;
 
-/// Runs `job` until it finishes or `shutdown` is triggered, and maps the
-/// outcome to an [`ExitStatus`]:
+/// Runs `job` until it finishes or `context.shutdown()` is triggered, and
+/// maps the outcome to an [`ExitStatus`]:
 ///
 /// - `Ok(())` maps to [`ExitStatus::Success`], even when shutdown was already
 ///   triggered.
@@ -18,11 +17,12 @@ use runtime::shutdown::Shutdown;
 /// - Any other error logs the failure and maps to the error's own
 ///   [`runtime::run_error::RunError::exit_status`].
 ///
-/// The job receives a clone of `shutdown` and is expected to observe it; the
+/// The job receives `context` and is expected to observe its shutdown; the
 /// runner does not race or abort the job. Panics inside the job propagate to
 /// the caller.
-pub async fn run<J: Job + ?Sized>(job: &J, shutdown: Shutdown) -> ExitStatus {
-    match job.run(shutdown.clone()).await {
+pub async fn run<J: Job + ?Sized>(job: &J, context: JobContext) -> ExitStatus {
+    let shutdown = context.shutdown().clone();
+    match job.run(context).await {
         Ok(()) => ExitStatus::Success,
         Err(error) if shutdown.is_triggered() => {
             tracing::warn!(job = job.name(), %error, "job interrupted by shutdown");
@@ -36,16 +36,17 @@ pub async fn run<J: Job + ?Sized>(job: &J, shutdown: Shutdown) -> ExitStatus {
 }
 
 /// Runs `job` like [`crate::runner::run`], bounded by the shutdown deadline:
-/// once `shutdown` is triggered, the job has `deadline` to return. If it does
-/// not, it is dropped and the outcome is
+/// once `context.shutdown()` is triggered, the job has `deadline` to return.
+/// If it does not, it is dropped and the outcome is
 /// [`runtime::exit_status::ExitStatus::Interrupted`] with `deadline_exceeded`
 /// set. Before the trigger, the job may run for any length of time.
 pub async fn run_within<J: Job + ?Sized>(
     job: &J,
-    shutdown: Shutdown,
+    context: JobContext,
     deadline: Duration,
 ) -> RunOutcome {
-    match within_deadline(&shutdown, deadline, run(job, shutdown.clone())).await {
+    let shutdown = context.shutdown().clone();
+    match within_deadline(&shutdown, deadline, run(job, context)).await {
         Ok(status) => RunOutcome::completed(status),
         Err(exceeded) => {
             tracing::warn!(job = job.name(), %exceeded, "job did not stop before the shutdown deadline");
@@ -57,16 +58,22 @@ pub async fn run_within<J: Job + ?Sized>(
 #[cfg(test)]
 mod tests {
     use std::future::pending;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use async_trait::async_trait;
+    use opentelemetry::metrics::NoopMeterProvider;
     use tokio::time::{Instant, timeout};
 
-    use super::{Job, run, run_within};
+    use super::{Job, JobContext, run, run_within};
     use runtime::exit_status::ExitStatus;
     use runtime::lifecycle::RunOutcome;
     use runtime::run_error::RunError;
     use runtime::shutdown::Shutdown;
+
+    fn context(shutdown: &Shutdown) -> JobContext {
+        JobContext::new(shutdown.clone(), Arc::new(NoopMeterProvider::new()))
+    }
 
     struct Succeeds;
 
@@ -76,7 +83,7 @@ mod tests {
             "succeeds"
         }
 
-        async fn run(&self, _shutdown: Shutdown) -> Result<(), RunError> {
+        async fn run(&self, _context: JobContext) -> Result<(), RunError> {
             Ok(())
         }
     }
@@ -94,7 +101,7 @@ mod tests {
             "fails"
         }
 
-        async fn run(&self, _shutdown: Shutdown) -> Result<(), RunError> {
+        async fn run(&self, _context: JobContext) -> Result<(), RunError> {
             Err((self.0)())
         }
     }
@@ -107,8 +114,8 @@ mod tests {
             "fails_on_shutdown"
         }
 
-        async fn run(&self, shutdown: Shutdown) -> Result<(), RunError> {
-            shutdown.triggered().await;
+        async fn run(&self, context: JobContext) -> Result<(), RunError> {
+            context.shutdown().triggered().await;
             Err(RunError::retryable("interrupted"))
         }
     }
@@ -121,8 +128,8 @@ mod tests {
             "succeeds_on_shutdown"
         }
 
-        async fn run(&self, shutdown: Shutdown) -> Result<(), RunError> {
-            shutdown.triggered().await;
+        async fn run(&self, context: JobContext) -> Result<(), RunError> {
+            context.shutdown().triggered().await;
             Ok(())
         }
     }
@@ -135,7 +142,7 @@ mod tests {
             "sleeps_then_succeeds"
         }
 
-        async fn run(&self, _shutdown: Shutdown) -> Result<(), RunError> {
+        async fn run(&self, _context: JobContext) -> Result<(), RunError> {
             tokio::time::sleep(Duration::from_secs(60)).await;
             Ok(())
         }
@@ -149,14 +156,14 @@ mod tests {
             "ignores_shutdown"
         }
 
-        async fn run(&self, _shutdown: Shutdown) -> Result<(), RunError> {
+        async fn run(&self, _context: JobContext) -> Result<(), RunError> {
             pending::<Result<(), RunError>>().await
         }
     }
 
     #[tokio::test(start_paused = true)]
     async fn success_maps_to_success() {
-        let status = run(&Succeeds, Shutdown::new()).await;
+        let status = run(&Succeeds, context(&Shutdown::new())).await;
 
         assert_eq!(status, ExitStatus::Success);
     }
@@ -165,7 +172,7 @@ mod tests {
     async fn retryable_maps_to_retryable() {
         let status = run(
             &Fails(|| RunError::retryable("connection reset")),
-            Shutdown::new(),
+            context(&Shutdown::new()),
         )
         .await;
 
@@ -176,7 +183,7 @@ mod tests {
     async fn permanent_maps_to_permanent() {
         let status = run(
             &Fails(|| RunError::permanent("bad config")),
-            Shutdown::new(),
+            context(&Shutdown::new()),
         )
         .await;
 
@@ -188,7 +195,7 @@ mod tests {
         let shutdown = Shutdown::new();
         shutdown.trigger();
 
-        let status = run(&FailsOnShutdown, shutdown).await;
+        let status = run(&FailsOnShutdown, context(&shutdown)).await;
 
         assert_eq!(status, ExitStatus::Interrupted);
     }
@@ -198,7 +205,11 @@ mod tests {
         let shutdown = Shutdown::new();
         shutdown.trigger();
 
-        let status = run(&Fails(|| RunError::permanent("bad config")), shutdown).await;
+        let status = run(
+            &Fails(|| RunError::permanent("bad config")),
+            context(&shutdown),
+        )
+        .await;
 
         assert_eq!(status, ExitStatus::Interrupted);
     }
@@ -208,7 +219,7 @@ mod tests {
         let shutdown = Shutdown::new();
         shutdown.trigger();
 
-        let status = run(&SucceedsOnShutdown, shutdown).await;
+        let status = run(&SucceedsOnShutdown, context(&shutdown)).await;
 
         assert_eq!(status, ExitStatus::Success);
     }
@@ -216,7 +227,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn run_forwards_the_shutdown_handle() {
         let shutdown = Shutdown::new();
-        let handle = tokio::spawn(run(&FailsOnShutdown, shutdown.clone()));
+        let handle = tokio::spawn(run(&FailsOnShutdown, context(&shutdown)));
 
         tokio::time::sleep(Duration::from_secs(5)).await;
         assert!(!handle.is_finished());
@@ -232,15 +243,20 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn run_within_completes_like_run() {
-        let outcome = run_within(&Succeeds, Shutdown::new(), Duration::from_secs(1)).await;
+        let outcome =
+            run_within(&Succeeds, context(&Shutdown::new()), Duration::from_secs(1)).await;
 
         assert_eq!(outcome, RunOutcome::completed(ExitStatus::Success));
     }
 
     #[tokio::test(start_paused = true)]
     async fn run_within_does_not_bound_an_untriggered_job() {
-        let outcome =
-            run_within(&SleepsThenSucceeds, Shutdown::new(), Duration::from_secs(1)).await;
+        let outcome = run_within(
+            &SleepsThenSucceeds,
+            context(&Shutdown::new()),
+            Duration::from_secs(1),
+        )
+        .await;
 
         assert_eq!(outcome, RunOutcome::completed(ExitStatus::Success));
     }
@@ -250,7 +266,8 @@ mod tests {
         let shutdown = Shutdown::new();
         shutdown.trigger();
 
-        let outcome = run_within(&FailsOnShutdown, shutdown, Duration::from_secs(5)).await;
+        let outcome =
+            run_within(&FailsOnShutdown, context(&shutdown), Duration::from_secs(5)).await;
 
         assert_eq!(outcome, RunOutcome::completed(ExitStatus::Interrupted));
     }
@@ -261,7 +278,8 @@ mod tests {
         shutdown.trigger();
         let started = Instant::now();
 
-        let outcome = run_within(&IgnoresShutdown, shutdown, Duration::from_secs(5)).await;
+        let outcome =
+            run_within(&IgnoresShutdown, context(&shutdown), Duration::from_secs(5)).await;
 
         assert_eq!(outcome, RunOutcome::abandoned(ExitStatus::Interrupted));
         assert_eq!(started.elapsed(), Duration::from_secs(5));

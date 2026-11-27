@@ -4,6 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use greetings::{GreetingError, KafkaGreetingPublisher, SendGreetingInteractor};
 use kafka::config::{KafkaConfig, KafkaProducerConfig};
+use kafka::metrics::ProducerMetrics;
 use messaging::MessagingError;
 use runtime::run_error::RunError;
 use worker::{Worker, WorkerContext};
@@ -45,6 +46,7 @@ impl Worker for GreetingsProducerWorker {
         let publisher = Arc::new(KafkaGreetingPublisher::connect(
             &self.kafka,
             &self.producer,
+            &ProducerMetrics::new(context.meter_provider()),
         )?);
         let sender = SendGreetingInteractor::new(publisher.clone());
 

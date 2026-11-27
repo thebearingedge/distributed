@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 
-use crate::job::Job;
+use crate::job::{Job, JobContext};
 use runtime::run_error::RunError;
-use runtime::shutdown::Shutdown;
 
 /// A placeholder job that does nothing and succeeds.
 #[derive(Clone, Copy, Debug, Default)]
@@ -14,20 +13,26 @@ impl Job for NoopJob {
         "noop"
     }
 
-    async fn run(&self, _shutdown: Shutdown) -> Result<(), RunError> {
+    async fn run(&self, _context: JobContext) -> Result<(), RunError> {
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use opentelemetry::metrics::NoopMeterProvider;
+
     use super::NoopJob;
-    use crate::job::Job;
+    use crate::job::{Job, JobContext};
     use runtime::shutdown::Shutdown;
 
     #[tokio::test]
     async fn succeeds() {
-        let result = NoopJob.run(Shutdown::new()).await;
+        let context = JobContext::new(Shutdown::new(), Arc::new(NoopMeterProvider::new()));
+
+        let result = NoopJob.run(context).await;
 
         assert!(result.is_ok());
     }
@@ -36,8 +41,9 @@ mod tests {
     async fn succeeds_even_when_shutdown_is_triggered() {
         let shutdown = Shutdown::new();
         shutdown.trigger();
+        let context = JobContext::new(shutdown, Arc::new(NoopMeterProvider::new()));
 
-        let result = NoopJob.run(shutdown).await;
+        let result = NoopJob.run(context).await;
 
         assert!(result.is_ok());
     }

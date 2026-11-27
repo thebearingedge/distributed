@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use kafka::config::{KafkaConfig, KafkaProducerConfig};
 use kafka::kafka_error::{KafkaClientError, SendError};
+use kafka::metrics::ProducerMetrics;
 use kafka::producer::KafkaProducer;
 use messaging::MessagingError;
 
@@ -18,7 +19,8 @@ pub struct KafkaGreetingPublisher {
 }
 
 impl KafkaGreetingPublisher {
-    /// Creates the producer client for [`GREETINGS_TOPIC`].
+    /// Creates the producer client for [`GREETINGS_TOPIC`]. Sends are
+    /// recorded on `metrics`.
     ///
     /// # Errors
     ///
@@ -27,9 +29,10 @@ impl KafkaGreetingPublisher {
     pub fn connect(
         kafka: &KafkaConfig,
         producer: &KafkaProducerConfig,
+        metrics: &ProducerMetrics,
     ) -> Result<Self, KafkaClientError> {
         Ok(Self {
-            producer: KafkaProducer::new(kafka, producer, GREETINGS_TOPIC)?,
+            producer: KafkaProducer::new(kafka, producer, GREETINGS_TOPIC, metrics)?,
         })
     }
 

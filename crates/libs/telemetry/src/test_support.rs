@@ -34,6 +34,7 @@ impl MetricsHarness {
     }
 
     fn flush(&self) -> Vec<ResourceMetrics> {
+        self.exporter.reset();
         self.provider.force_flush().expect("flushing metrics");
         self.exporter
             .get_finished_metrics()
@@ -89,6 +90,55 @@ impl MetricsHarness {
             Some(other) => panic!("{name} is not an i64 sum: {other:?}"),
         }
     }
+
+    /// Flushes the provider and returns the cumulative data points of the
+    /// `u64` sum named `name`, covering counters, or an empty [`Vec`] when
+    /// the metric was never recorded.
+    ///
+    /// # Panics
+    ///
+    /// Panics when flushing or reading fails, or when the metric named
+    /// `name` is not a `u64` sum.
+    #[must_use]
+    pub fn u64_sum(&self, name: &str) -> Vec<U64SumPoint> {
+        let finished = self.flush();
+        match find_metric(&finished, name).map(Metric::data) {
+            None => Vec::new(),
+            Some(AggregatedMetrics::U64(MetricData::Sum(sum))) => sum
+                .data_points()
+                .map(|point| U64SumPoint {
+                    attributes: point.attributes().cloned().collect(),
+                    value: point.value(),
+                })
+                .collect(),
+            Some(other) => panic!("{name} is not a u64 sum: {other:?}"),
+        }
+    }
+
+    /// Flushes the provider and returns the data points of the `i64` gauge
+    /// named `name`, or an empty [`Vec`] when nothing was observed. For an
+    /// observable gauge, the points are only the attribute sets observed
+    /// during this flush.
+    ///
+    /// # Panics
+    ///
+    /// Panics when flushing or reading fails, or when the metric named
+    /// `name` is not an `i64` gauge.
+    #[must_use]
+    pub fn i64_gauge(&self, name: &str) -> Vec<GaugePoint> {
+        let finished = self.flush();
+        match find_metric(&finished, name).map(Metric::data) {
+            None => Vec::new(),
+            Some(AggregatedMetrics::I64(MetricData::Gauge(gauge))) => gauge
+                .data_points()
+                .map(|point| GaugePoint {
+                    attributes: point.attributes().cloned().collect(),
+                    value: point.value(),
+                })
+                .collect(),
+            Some(other) => panic!("{name} is not an i64 gauge: {other:?}"),
+        }
+    }
 }
 
 /// One cumulative `f64` histogram data point flushed from a
@@ -128,6 +178,40 @@ impl SumPoint {
     }
 }
 
+/// One cumulative `u64` sum data point flushed from a [`MetricsHarness`].
+#[must_use]
+pub struct U64SumPoint {
+    /// The attributes recorded with the point.
+    pub attributes: Vec<KeyValue>,
+    /// The accumulated value of the point.
+    pub value: u64,
+}
+
+impl U64SumPoint {
+    /// The value of the attribute named `key`, when it was recorded.
+    #[must_use]
+    pub fn attribute(&self, key: &str) -> Option<&Value> {
+        find_attribute(&self.attributes, key)
+    }
+}
+
+/// One `i64` gauge data point flushed from a [`MetricsHarness`].
+#[must_use]
+pub struct GaugePoint {
+    /// The attributes observed with the point.
+    pub attributes: Vec<KeyValue>,
+    /// The last observed value of the point.
+    pub value: i64,
+}
+
+impl GaugePoint {
+    /// The value of the attribute named `key`, when it was observed.
+    #[must_use]
+    pub fn attribute(&self, key: &str) -> Option<&Value> {
+        find_attribute(&self.attributes, key)
+    }
+}
+
 fn find_attribute<'a>(attributes: &'a [KeyValue], key: &str) -> Option<&'a Value> {
     attributes
         .iter()
@@ -145,6 +229,9 @@ fn find_metric<'a>(finished: &'a [ResourceMetrics], name: &str) -> Option<&'a Me
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use opentelemetry::metrics::MeterProvider as _;
 
     use super::*;
@@ -154,6 +241,57 @@ mod tests {
         let harness = MetricsHarness::default();
         assert!(harness.f64_histogram("nope").is_empty());
         assert!(harness.i64_sum("nope").is_empty());
+        assert!(harness.u64_sum("nope").is_empty());
+        assert!(harness.i64_gauge("nope").is_empty());
+    }
+
+    #[test]
+    fn u64_counters_accumulate() {
+        let harness = MetricsHarness::default();
+        let meter = harness.provider().meter("test");
+        let counter = meter.u64_counter("test.count").build();
+        counter.add(2, &[KeyValue::new("k", "v")]);
+        counter.add(3, &[KeyValue::new("k", "v")]);
+
+        let points = harness.u64_sum("test.count");
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].value, 5);
+        assert_eq!(points[0].attribute("k"), Some(&Value::from("v")));
+    }
+
+    #[test]
+    fn observable_gauges_report_only_current_observations() {
+        let harness = MetricsHarness::default();
+        let meter = harness.provider().meter("test");
+        let observing = Arc::new(AtomicBool::new(true));
+        let observed = Arc::clone(&observing);
+        let _gauge = meter
+            .i64_observable_gauge("test.gauge")
+            .with_callback(move |observer| {
+                if observed.load(Ordering::SeqCst) {
+                    observer.observe(7, &[KeyValue::new("p", "0")]);
+                }
+            })
+            .build();
+
+        let points = harness.i64_gauge("test.gauge");
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].value, 7);
+        assert_eq!(points[0].attribute("p"), Some(&Value::from("0")));
+
+        observing.store(false, Ordering::SeqCst);
+        assert!(harness.i64_gauge("test.gauge").is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "is not an i64 gauge")]
+    fn reading_a_sum_as_a_gauge_panics() {
+        let harness = MetricsHarness::default();
+        let meter = harness.provider().meter("test");
+        let counter = meter.i64_up_down_counter("test.sum").build();
+        counter.add(1, &[]);
+
+        let _ = harness.i64_gauge("test.sum");
     }
 
     #[test]

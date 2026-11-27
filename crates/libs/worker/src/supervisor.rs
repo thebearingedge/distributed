@@ -45,6 +45,7 @@ mod tests {
     use std::time::Duration;
 
     use async_trait::async_trait;
+    use opentelemetry::metrics::NoopMeterProvider;
     use tokio::time::{Instant, timeout};
 
     use runtime::exit_status::ExitStatus;
@@ -59,7 +60,11 @@ mod tests {
     use super::{WORKER_PROBE_SERVER_TASK, supervise};
 
     fn context(shutdown: &Shutdown) -> WorkerContext {
-        WorkerContext::new(shutdown.clone(), Heartbeat::new(Duration::from_secs(30)))
+        WorkerContext::new(
+            shutdown.clone(),
+            Heartbeat::new(Duration::from_secs(30)),
+            Arc::new(NoopMeterProvider::new()),
+        )
     }
 
     fn shutdown_aware_server(

@@ -5,13 +5,16 @@ Composable runtime for long-running Kubernetes worker Deployments: the
 HTTP probe server ([`probes_router`](src/probes.rs)), joint supervision of the
 worker and the server ([`supervise`](src/supervisor.rs)), and the
 [`launch`](src/launch.rs) process composition root. One worker per binary; the
-crate depends on `runtime`, `web`, and `telemetry`, never on a domain.
+crate depends on `runtime`, `web`, `telemetry`, and the `opentelemetry` API
+crate, never on a domain.
 
 ## Contents
 
 - [`Worker` / `WorkerContext`](src/worker.rs) — the contract: a static `name`
   plus `run(context)` that keeps the heartbeat fresh, returns once shutdown is
-  triggered, and classifies failures via `runtime::RunError`.
+  triggered, and classifies failures via `runtime::RunError`. The context also
+  carries the meter provider (`context.meter_provider()`) for instrumentation
+  such as `kafka::metrics`.
 - [`WorkerConfig`](src/config.rs) — CLI/env configuration for the probe
   server, heartbeat, and process lifecycle (it flattens
   `runtime::config::LifecycleConfig`).
@@ -24,7 +27,8 @@ crate depends on `runtime`, `web`, and `telemetry`, never on a domain.
   aborted.
 - [`launch`](src/launch.rs) — process composition root: initializes telemetry,
   installs shutdown signal handlers (a second signal exits 143 immediately),
-  binds the listener, supervises under the shutdown deadline, flushes
+  binds the listener, hands the worker the telemetry meter provider through
+  the context, supervises under the shutdown deadline, flushes
   telemetry within `SHUTDOWN_FLUSH_TIMEOUT_SECONDS`, and returns the process
   exit code.
 - [`InertWorker`](src/inert.rs) — a placeholder worker that heartbeats and

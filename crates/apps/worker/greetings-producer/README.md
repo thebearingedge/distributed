@@ -12,7 +12,8 @@ variables — see
 [`crates/libs/kafka/README.md`](../../../libs/kafka/README.md) for the full
 list — and
 [`crates/libs/worker/README.md`](../../../libs/worker/README.md) documents
-probe semantics, the `SHUTDOWN_*` lifecycle vars, and exit codes. Run it
-locally with
+probe semantics, the `SHUTDOWN_*` lifecycle vars, and exit codes. It emits the
+`kafka::metrics` producer instruments — sent messages and send duration —
+through the worker's meter provider. Run it locally with
 `just cargo-run greetings-producer`, or build the image with
 `just docker-build greetings-producer`.

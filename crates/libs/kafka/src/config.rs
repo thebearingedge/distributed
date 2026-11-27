@@ -10,6 +10,9 @@ use rdkafka::ClientConfig;
 pub const KAFKA_PRODUCER_DELIVERY_TIMEOUT_DEFAULT_SECONDS: u64 = 30;
 /// Default for [`KafkaProducerConfig::kafka_producer_flush_timeout_seconds`].
 pub const KAFKA_PRODUCER_FLUSH_TIMEOUT_DEFAULT_SECONDS: u64 = 10;
+/// Default for
+/// [`KafkaConsumerConfig::kafka_consumer_statistics_interval_seconds`].
+pub const KAFKA_CONSUMER_STATISTICS_INTERVAL_DEFAULT_SECONDS: u64 = 15;
 
 const BOOTSTRAP_SERVERS: &str = "bootstrap.servers";
 const BROKER_ADDRESS_FAMILY: &str = "broker.address.family";
@@ -18,6 +21,7 @@ const GROUP_ID: &str = "group.id";
 const ENABLE_AUTO_COMMIT: &str = "enable.auto.commit";
 const ENABLE_AUTO_OFFSET_STORE: &str = "enable.auto.offset.store";
 const AUTO_OFFSET_RESET: &str = "auto.offset.reset";
+const STATISTICS_INTERVAL_MS: &str = "statistics.interval.ms";
 const ENABLE_IDEMPOTENCE: &str = "enable.idempotence";
 const MESSAGE_TIMEOUT_MS: &str = "message.timeout.ms";
 
@@ -70,9 +74,9 @@ impl AutoOffsetReset {
     }
 }
 
-/// Consumer configuration: group id and where a group with no committed
-/// offset starts reading. CLI args fall back to env vars, which fall back
-/// to declared defaults.
+/// Consumer configuration: group id, where a group with no committed
+/// offset starts reading, and the statistics interval. CLI args fall back
+/// to env vars, which fall back to declared defaults.
 #[derive(Debug, clap::Parser)]
 pub struct KafkaConsumerConfig {
     /// Consumer group id.
@@ -86,12 +90,27 @@ pub struct KafkaConsumerConfig {
         default_value_t = AutoOffsetReset::Earliest
     )]
     pub kafka_consumer_auto_offset_reset: AutoOffsetReset,
+    /// Seconds between librdkafka statistics reports, which feed the
+    /// consumer lag metric.
+    #[arg(
+        long,
+        env = "KAFKA_CONSUMER_STATISTICS_INTERVAL_SECONDS",
+        default_value_t = KAFKA_CONSUMER_STATISTICS_INTERVAL_DEFAULT_SECONDS,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    pub kafka_consumer_statistics_interval_seconds: u64,
 }
 
 impl KafkaConsumerConfig {
+    /// Time between librdkafka statistics reports.
+    #[must_use]
+    pub fn statistics_interval(&self) -> Duration {
+        Duration::from_secs(self.kafka_consumer_statistics_interval_seconds)
+    }
+
     /// Applies the consumer settings to an rdkafka client config: the
-    /// group id, auto-commit enabled, manual offset storing, and the
-    /// auto offset reset value.
+    /// group id, auto-commit enabled, manual offset storing, the auto
+    /// offset reset value, and the statistics interval in milliseconds.
     pub(crate) fn apply(&self, config: &mut ClientConfig) {
         config.set(GROUP_ID, self.kafka_consumer_group_id.as_str());
         config.set(ENABLE_AUTO_COMMIT, "true");
@@ -99,6 +118,10 @@ impl KafkaConsumerConfig {
         config.set(
             AUTO_OFFSET_RESET,
             self.kafka_consumer_auto_offset_reset.as_str(),
+        );
+        config.set(
+            STATISTICS_INTERVAL_MS,
+            self.statistics_interval().as_millis().to_string(),
         );
     }
 }
@@ -160,9 +183,10 @@ mod tests {
     use super::{
         AUTO_OFFSET_RESET, AutoOffsetReset, BOOTSTRAP_SERVERS, BROKER_ADDRESS_FAMILY, CLIENT_ID,
         ENABLE_AUTO_COMMIT, ENABLE_AUTO_OFFSET_STORE, ENABLE_IDEMPOTENCE, GROUP_ID,
+        KAFKA_CONSUMER_STATISTICS_INTERVAL_DEFAULT_SECONDS,
         KAFKA_PRODUCER_DELIVERY_TIMEOUT_DEFAULT_SECONDS,
         KAFKA_PRODUCER_FLUSH_TIMEOUT_DEFAULT_SECONDS, KafkaConfig, KafkaConsumerConfig,
-        KafkaProducerConfig, MESSAGE_TIMEOUT_MS,
+        KafkaProducerConfig, MESSAGE_TIMEOUT_MS, STATISTICS_INTERVAL_MS,
     };
 
     #[test]
@@ -201,6 +225,23 @@ mod tests {
             config.kafka_consumer_auto_offset_reset,
             AutoOffsetReset::Earliest
         );
+        assert_eq!(
+            config.kafka_consumer_statistics_interval_seconds,
+            KAFKA_CONSUMER_STATISTICS_INTERVAL_DEFAULT_SECONDS
+        );
+        assert_eq!(config.statistics_interval(), Duration::from_secs(15));
+    }
+
+    #[test]
+    fn zero_statistics_interval_is_rejected() {
+        let config = KafkaConsumerConfig::try_parse_from([
+            "test",
+            "--kafka-consumer-group-id",
+            "g",
+            "--kafka-consumer-statistics-interval-seconds",
+            "0",
+        ]);
+        assert!(config.is_err());
     }
 
     #[test]
@@ -242,6 +283,7 @@ mod tests {
         assert_eq!(config.get(BOOTSTRAP_SERVERS), Some("h:1"));
         assert_eq!(config.get(BROKER_ADDRESS_FAMILY), Some("v4"));
         assert_eq!(config.get(CLIENT_ID), None);
+        assert_eq!(config.get(STATISTICS_INTERVAL_MS), None);
 
         let identified = KafkaConfig::try_parse_from([
             "test",
@@ -265,6 +307,7 @@ mod tests {
         assert_eq!(client.get(ENABLE_AUTO_COMMIT), Some("true"));
         assert_eq!(client.get(ENABLE_AUTO_OFFSET_STORE), Some("false"));
         assert_eq!(client.get(AUTO_OFFSET_RESET), Some("earliest"));
+        assert_eq!(client.get(STATISTICS_INTERVAL_MS), Some("15000"));
 
         let latest = KafkaConsumerConfig::try_parse_from([
             "test",

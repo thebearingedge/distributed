@@ -7,11 +7,13 @@ use rdkafka::{
     util::Timeout,
 };
 use serde::Serialize;
+use tokio::time::Instant;
 use tracing::Instrument;
 
 use crate::config::{KafkaConfig, KafkaProducerConfig};
 use crate::headers;
 use crate::kafka_error::{KafkaClientError, SendError};
+use crate::metrics::{ProducerMetrics, SendInstruments};
 
 /// Partition and offset a message was written to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +34,7 @@ pub struct KafkaProducer<T> {
     inner: FutureProducer,
     topic: String,
     flush_timeout: Duration,
+    metrics: SendInstruments,
     _marker: PhantomData<fn(&T)>,
 }
 
@@ -44,7 +47,8 @@ impl<T> fmt::Debug for KafkaProducer<T> {
 }
 
 impl<T: Serialize> KafkaProducer<T> {
-    /// Creates the producer client for `topic`.
+    /// Creates the producer client for `topic`. Sends are recorded on
+    /// `metrics`.
     ///
     /// # Errors
     ///
@@ -54,7 +58,9 @@ impl<T: Serialize> KafkaProducer<T> {
         kafka: &KafkaConfig,
         producer: &KafkaProducerConfig,
         topic: impl Into<String>,
+        metrics: &ProducerMetrics,
     ) -> Result<Self, KafkaClientError> {
+        let topic = topic.into();
         let mut config = kafka.client_config();
         producer.apply(&mut config);
         let inner = config
@@ -62,7 +68,8 @@ impl<T: Serialize> KafkaProducer<T> {
             .map_err(KafkaClientError::Config)?;
         Ok(Self {
             inner,
-            topic: topic.into(),
+            metrics: metrics.instruments(&topic),
+            topic,
             flush_timeout: producer.flush_timeout(),
             _marker: PhantomData,
         })
@@ -72,18 +79,29 @@ impl<T: Serialize> KafkaProducer<T> {
     /// the broker's delivery acknowledgement, bounded by
     /// `KAFKA_PRODUCER_DELIVERY_TIMEOUT_SECONDS`.
     ///
+    /// Every attempt, including one that fails to encode, is recorded on
+    /// `messaging.client.sent.messages` and
+    /// `messaging.client.operation.duration`.
+    ///
     /// # Errors
     ///
     /// [`SendError::Encode`] when the value cannot be serialized, or
     /// [`SendError::Delivery`] when the broker rejects or fails to deliver
     /// the message.
     pub async fn send(&self, key: Option<&[u8]>, value: &T) -> Result<Ack, SendError> {
+        let started = Instant::now();
+        let outcome = self.deliver(key, value).await;
+        self.metrics.record(started.elapsed(), outcome.as_ref());
+        outcome
+    }
+
+    async fn deliver(&self, key: Option<&[u8]>, value: &T) -> Result<Ack, SendError> {
         let payload = serde_json::to_vec(value)?;
 
         let span = tracing::info_span!(
             "kafka.send",
             otel.kind = "producer",
-            messaging.system = "kafka",
+            messaging.system.name = "kafka",
             messaging.operation.type = "send",
             messaging.destination.name = %self.topic,
         );

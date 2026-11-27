@@ -15,5 +15,7 @@ pub mod consumer;
 pub mod headers;
 /// Error types and their classification.
 pub mod kafka_error;
+/// OpenTelemetry messaging metrics for producers and consumers.
+pub mod metrics;
 /// Typed JSON producer with idempotent delivery.
 pub mod producer;
