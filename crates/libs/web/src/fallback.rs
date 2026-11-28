@@ -29,19 +29,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use axum::{
-        Router,
-        body::Body,
-        http::{Request, StatusCode, header},
-        response::Response,
-        routing::get,
-    };
-    use http_body_util::BodyExt;
-    use serde_json::Value;
+    use axum::{Router, http::StatusCode, routing::get};
     use serde_json_assert::assert_json_include;
-    use tower::ServiceExt;
 
     use super::with_json_fallbacks;
+    use crate::test_support;
 
     fn router() -> Router {
         with_json_fallbacks(Router::new().route("/ping", get(ping).post(ping)))
@@ -51,31 +43,12 @@ mod tests {
         StatusCode::OK
     }
 
-    fn request(method: &'static str, uri: &str) -> Request<Body> {
-        Request::builder()
-            .method(method)
-            .uri(uri)
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    async fn body_json(res: Response) -> Value {
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&bytes).unwrap()
-    }
-
-    fn content_type(res: &Response) -> String {
-        res.headers()
-            .get(header::CONTENT_TYPE)
-            .map_or_default(|v| v.to_str().unwrap().to_owned())
-    }
-
     #[tokio::test]
     async fn unknown_route_is_json_404() {
-        let res = router().oneshot(request("GET", "/nope")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::NOT_FOUND);
-        assert!(content_type(&res).starts_with("application/json"));
-        let body = body_json(res).await;
+        let res = test_support::get(router(), "/nope").await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND);
+        assert!(res.content_type.starts_with("application/json"));
+        let body = res.body.expect("the 404 body is JSON");
         assert_json_include!(
             actual: body,
             expected: serde_json::json!({ "error": "route not found" })
@@ -84,14 +57,11 @@ mod tests {
 
     #[tokio::test]
     async fn wrong_method_is_json_405() {
-        let res = router().oneshot(request("DELETE", "/ping")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert!(content_type(&res).starts_with("application/json"));
-        let allow = res
-            .headers()
-            .get(header::ALLOW)
-            .map_or_default(|v| v.to_str().unwrap().to_owned());
-        let body = body_json(res).await;
+        let res = test_support::delete(router(), "/ping").await;
+        assert_eq!(res.status, StatusCode::METHOD_NOT_ALLOWED);
+        assert!(res.content_type.starts_with("application/json"));
+        let allow = res.header("allow").unwrap_or_default();
+        let body = res.body.expect("the 405 body is JSON");
         assert_json_include!(
             actual: body,
             expected: serde_json::json!({ "error": "method not allowed" })
@@ -102,7 +72,7 @@ mod tests {
 
     #[tokio::test]
     async fn known_route_is_untouched() {
-        let res = router().oneshot(request("GET", "/ping")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
+        let res = test_support::get(router(), "/ping").await;
+        assert_eq!(res.status, StatusCode::OK);
     }
 }

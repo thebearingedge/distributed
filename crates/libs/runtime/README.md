@@ -39,14 +39,12 @@ has no root re-exports.
   `shutdown` is triggered and `deadline` then passes first; the deadline clock
   starts only at the trigger, and the losing future is dropped.
   [`DeadlineExceeded`](src/deadline.rs) names the deadline that passed.
-- [`RunOutcome` / `flush_within` / `finish`](src/lifecycle.rs) — how a run
-  ended (its [`ExitStatus`](src/exit_status.rs) plus whether work was
-  abandoned at the deadline), [`FlushOutcome`](src/lifecycle.rs) and
-  [`flush_within`](src/lifecycle.rs) — the blocking flush bounded by a
-  timeout, whose failures are logged warnings — and [`finish`](src/lifecycle.rs),
-  which flushes telemetry and returns the process exit code, calling
+- [`RunOutcome` / `finish`](src/lifecycle.rs) — how a run ended (its
+  [`ExitStatus`](src/exit_status.rs) plus whether work was abandoned at the
+  deadline) and [`finish`](src/lifecycle.rs), which flushes telemetry within
+  the flush timeout and returns the process exit code, calling
   `std::process::exit` instead of returning when work was abandoned or the
-  flush timed out ([`must_exit_immediately`](src/lifecycle.rs)).
+  flush timed out.
 - [`Supervisor`](src/supervisor.rs) — runs named critical tasks that share
   one `Shutdown`; the first task to stop with an error, a panic, or an `Ok`
   before shutdown was requested triggers the shutdown for the others and
@@ -58,7 +56,7 @@ has no root re-exports.
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `SHUTDOWN_DRAIN_SECONDS` | `5` | Seconds to keep serving after the shutdown signal, with readiness reporting shutting down, before servers stop accepting connections. |
+| `SHUTDOWN_DRAIN_SECONDS` | `5` | Seconds to keep serving after the shutdown signal, with readiness reporting shutting down, before servers stop accepting connections; jobs have no server to drain but accept it (it still counts toward the deadline). |
 | `SHUTDOWN_TIMEOUT_SECONDS` | `15` | Seconds after the drain that tasks may take to stop before they are abandoned and the process exits 143; must be at least 1. |
 | `SHUTDOWN_FLUSH_TIMEOUT_SECONDS` | `5` | Seconds the final telemetry flush may take; must be at least 1. |
 
@@ -93,6 +91,9 @@ During the drain, servers keep accepting connections while readiness reports
 | Code | [`ExitStatus`](src/exit_status.rs) | Meaning |
 |---|---|---|
 | 0 | `Success` | The run completed, even if a shutdown signal arrived. |
-| 1 | `Retryable` | A transient failure; counts toward the Job's `backoffLimit`. |
+| 1 | `Retryable` | A transient failure, a panic, or a supervised task returning before shutdown was requested. A Job counts it toward `backoffLimit`; a Deployment restarts the pod. |
 | 2 | `Permanent` | A failure retrying cannot fix (bad input, bad configuration). Match it with a `podFailurePolicy` `FailJob` rule so the Job fails without further restarts. |
-| 143 | `Interrupted` | The run was cut short by a shutdown signal (128 + SIGTERM), or the shutdown deadline passed, or a second signal arrived. |
+| 143 | `Interrupted` | The run was cut short by a shutdown signal (128 + SIGTERM), or the shutdown deadline passed with tasks still running, or a second signal arrived. |
+
+A telemetry flush failure is logged and never changes the exit status. The
+`web`, `worker`, and `jobs` READMEs list the causes specific to each shape.

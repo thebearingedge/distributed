@@ -1,9 +1,9 @@
 # jobs
 
 Composable runtime for run-to-completion Kubernetes Job processes: the
-[`Job`](src/job.rs) contract, the [`run`](src/runner.rs) and
-[`run_within`](src/runner.rs) functions that map the job's outcome to an exit
-status, and the [`launch`](src/launch.rs) composition root. One job per
+[`Job`](src/job.rs) contract, the [`run_within`](src/runner.rs) function that
+maps the job's outcome to an exit status, and the
+[`launch`](src/launch.rs) composition root. One job per
 binary; the crate has no HTTP surface and does not depend on axum or `web`.
 It depends on the `opentelemetry` API crate for the meter provider it hands
 to the job.
@@ -16,19 +16,19 @@ Jobs should be idempotent, because a retried Job runs again from the start.
   `runtime::RunError`. The [`JobContext`](src/job.rs) carries the shutdown
   handle (`context.shutdown()`) and the meter provider
   (`context.meter_provider()`) for instrumentation such as `kafka::metrics`.
-- [`run`](src/runner.rs) — runs the job and maps the outcome: `Ok` gives
-  success even when shutdown was triggered, an error after shutdown gives
-  interrupted, and any other error gives the error's own classification.
-- [`run_within`](src/runner.rs) — runs the job like [`run`](src/runner.rs),
-  bounded by the shutdown deadline: once shutdown is triggered, the job has
-  the deadline to return; if it does not, it is dropped and the outcome is
-  interrupted with `deadline_exceeded` set. Before the trigger, the job may
-  run for any length of time.
+- [`run_within`](src/runner.rs) — runs the job bounded by the shutdown
+  deadline and maps the outcome: `Ok` gives success even when shutdown was
+  triggered, an error after shutdown gives interrupted, and any other error
+  gives the error's own classification. Once shutdown is triggered, the job
+  has the deadline to return; if it does not, it is dropped and the outcome
+  is interrupted with `deadline_exceeded` set. Before the trigger, the job
+  may run for any length of time.
 - [`launch`](src/launch.rs) — process composition root: initializes telemetry,
-  installs shutdown signal handlers (a second signal exits 143 immediately),
-  hands the job the telemetry meter provider through its `JobContext`,
+  installs shutdown signal handlers immediately before running the job (a
+  second signal exits 143 immediately), hands the job the telemetry meter
+  provider through its `JobContext`,
   runs the job bounded by the deadline from
-  [`runtime::config::LifecycleConfig`](../../runtime/src/config.rs), ends with
+  [`runtime::config::LifecycleConfig`](../runtime/src/config.rs), ends with
   a telemetry flush bounded by the flush timeout, and returns the process
   exit code.
 
@@ -40,30 +40,17 @@ target.
 
 ## Configuration
 
-| Env var | Default | Meaning |
-|---|---|---|
-| `SHUTDOWN_DRAIN_SECONDS` | `5` | Seconds to keep serving after the shutdown signal. Jobs have no server to drain but accept the knob. |
-| `SHUTDOWN_TIMEOUT_SECONDS` | `15` | Seconds after the drain the job may take to stop before it is abandoned and the process exits 143; must be at least 1. |
-| `SHUTDOWN_FLUSH_TIMEOUT_SECONDS` | `5` | Seconds the final telemetry flush may take; must be at least 1. |
-
-These come from `runtime::config::LifecycleConfig`, which the app's `Args`
-flattens. CLI flags (`--shutdown-drain-seconds`,
-`--shutdown-timeout-seconds`, `--shutdown-flush-timeout-seconds`) override
-env vars, which override these defaults.
+Jobs take only the shared lifecycle vars from
+[`runtime::config::LifecycleConfig`](../runtime/src/config.rs), which the
+app's `Args` flattens. See the [runtime README](../runtime/README.md#configuration)
+for the vars, defaults, and CLI flags.
 
 ## Exit statuses
 
-| Exit code | Meaning |
-|---|---|
-| 0 | Success: the run completed. |
-| 1 | Retryable: a transient failure; counts toward the Job's `backoffLimit`. |
-| 2 | Permanent: a failure retrying cannot fix (bad input, bad configuration). |
-| 143 | Interrupted: the run was cut short by a shutdown signal (128 + SIGTERM), the shutdown deadline passed, or a second signal arrived. |
-
-A telemetry flush failure is logged and never changes the exit status.
-
-A `podFailurePolicy` that fails the Job on exit code 2 and ignores
-disruption-driven restarts:
+Exit codes follow the [runtime taxonomy](../runtime/README.md#exit-codes).
+Exit 1 counts toward the Job's `backoffLimit`. Exit 2 is meant for a
+`podFailurePolicy` `FailJob` rule. Here is a policy that fails the Job on
+exit code 2 and ignores disruption-driven restarts:
 
 ```yaml
 podFailurePolicy:
@@ -86,8 +73,7 @@ aborts the job; an error returned after shutdown is reported as interrupted
 (exit code 143), while `Ok` stays success. Once shutdown is triggered, the job
 has the deadline (`SHUTDOWN_DRAIN_SECONDS + SHUTDOWN_TIMEOUT_SECONDS`) to
 return; a job that does not is dropped, and the process exits 143 after the
-bounded telemetry flush. A second `SIGTERM`/`SIGINT` exits 143 immediately,
-skipping the drain, the deadline, and the flush.
+bounded telemetry flush.
 
 ## Composing a job
 
@@ -138,6 +124,6 @@ async fn main() -> ExitCode {
 ```
 
 where `src/config.rs` is the bin-private `Args` that flattens
-[`runtime::config::LifecycleConfig`](../../runtime/src/config.rs). The
+[`runtime::config::LifecycleConfig`](../runtime/src/config.rs). The
 placeholder job app, [`default-job`](../../apps/job/default-job), shows a
 complete implementation.

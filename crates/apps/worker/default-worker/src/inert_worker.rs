@@ -73,23 +73,13 @@ mod tests {
         assert!(heartbeat.check().is_ok(), "the worker keeps beating");
 
         shutdown.trigger();
-        let joined = timeout(Duration::from_secs(1), handle)
+        let result = timeout(Duration::from_secs(1), handle)
             .await
-            .expect("the worker stops once shutdown is triggered");
-        assert!(joined.is_ok());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn pends_while_not_shut_down() {
-        let shutdown = Shutdown::new();
-        let heartbeat = Heartbeat::new(Duration::from_secs(30));
-        let context = WorkerContext::new(shutdown, heartbeat, Arc::new(NoopMeterProvider::new()));
-
-        let result = timeout(Duration::from_secs(300), async {
-            InertWorker.run(context).await
-        })
-        .await;
-
-        assert!(result.is_err(), "the worker pends until shutdown");
+            .expect("the worker stops once shutdown is triggered")
+            .expect("the spawned worker task does not panic");
+        assert!(
+            result.is_ok(),
+            "the worker returns Ok(()) once shutdown is triggered"
+        );
     }
 }

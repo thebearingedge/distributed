@@ -20,7 +20,7 @@ use runtime::lifecycle::RunOutcome;
 /// The job receives `context` and is expected to observe its shutdown; the
 /// runner does not race or abort the job. Panics inside the job propagate to
 /// the caller.
-pub async fn run<J: Job + ?Sized>(job: &J, context: JobContext) -> ExitStatus {
+pub(crate) async fn run<J: Job + ?Sized>(job: &J, context: JobContext) -> ExitStatus {
     let shutdown = context.shutdown().clone();
     match job.run(context).await {
         Ok(()) => ExitStatus::Success,
@@ -35,7 +35,7 @@ pub async fn run<J: Job + ?Sized>(job: &J, context: JobContext) -> ExitStatus {
     }
 }
 
-/// Runs `job` like [`crate::runner::run`], bounded by the shutdown deadline:
+/// Runs `job` like `run`, bounded by the shutdown deadline:
 /// once `context.shutdown()` is triggered, the job has `deadline` to return.
 /// If it does not, it is dropped and the outcome is
 /// [`runtime::exit_status::ExitStatus::Interrupted`] with `deadline_exceeded`

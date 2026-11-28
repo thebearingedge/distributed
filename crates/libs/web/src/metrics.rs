@@ -1,6 +1,3 @@
-//! OpenTelemetry-convention HTTP server metrics middleware:
-//! [`crate::metrics::with_http_metrics`].
-
 use std::time::Instant;
 
 use axum::{
@@ -34,8 +31,7 @@ struct HttpServerMetrics {
 
 /// Records `http.server.request.duration` (in seconds) and
 /// `http.server.active_requests` for every route and fallback that
-/// `router` has at call time; routers merged afterwards (e.g. health
-/// probes) are not measured, so apply it last.
+/// `router` has at call time.
 ///
 /// The recorded attributes are `http.request.method`, `url.scheme`,
 /// `http.response.status_code`, and — on matched requests — `http.route`,
@@ -47,7 +43,7 @@ struct HttpServerMetrics {
 ///
 /// Instruments are created on `meter_provider` under the `web`
 /// instrumentation scope.
-pub fn with_http_metrics<P>(router: Router, meter_provider: &P) -> Router
+pub(crate) fn with_http_metrics<P>(router: Router, meter_provider: &P) -> Router
 where
     P: MeterProvider + ?Sized,
 {

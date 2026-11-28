@@ -1,5 +1,3 @@
-//! Request body-size limit: [`crate::body_limit::with_body_limit`].
-
 use axum::{Router, extract::DefaultBodyLimit};
 
 /// Caps request bodies read by body extractors on every route `router` has
@@ -7,7 +5,7 @@ use axum::{Router, extract::DefaultBodyLimit};
 /// [`crate::extractors::ValidatedJson`] are rejected with
 /// `413 Payload Too Large` and the standard JSON error body
 /// (`{"error": "request body too large"}`).
-pub fn with_body_limit(router: Router, limit_bytes: usize) -> Router {
+pub(crate) fn with_body_limit(router: Router, limit_bytes: usize) -> Router {
     router.layer(DefaultBodyLimit::max(limit_bytes))
 }
 

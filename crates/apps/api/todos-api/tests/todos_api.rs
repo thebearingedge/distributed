@@ -20,12 +20,12 @@ mod tests {
 
     #[sqlx::test]
     async fn parts_migrate_and_report_postgres_ready(postgres: PgPool) {
-        let context = ApiContext::new(Arc::new(NoopMeterProvider::new()));
+        let context = ApiContext::new(Shutdown::new(), Arc::new(NoopMeterProvider::new()));
         let parts = TodosApi::parts(postgres, &context)
             .await
             .expect("parts builds against the test database");
         let config = ApiConfig::try_parse_from(["test"]).expect("test config parses");
-        let router = parts.router(&config, &Shutdown::new(), &NoopMeterProvider::new());
+        let router = parts.router(&config, context.shutdown(), &NoopMeterProvider::new());
 
         let ready = get(router.clone(), "/readyz").await;
         assert_eq!(ready.status, StatusCode::OK);

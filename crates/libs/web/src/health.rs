@@ -93,7 +93,7 @@ struct Liveness {
 ///   entirely. Otherwise it runs every readiness
 ///   [`runtime::health::HealthCheck`] as above.
 #[derive(Clone)]
-pub struct HealthRouter {
+pub(crate) struct HealthRouter {
     readiness: Vec<HealthCheck>,
     liveness: Vec<HealthCheck>,
     timeout: Duration,
@@ -103,7 +103,7 @@ pub struct HealthRouter {
 impl HealthRouter {
     /// A router builder with no checks, probing against `shutdown`.
     #[must_use]
-    pub fn new(timeout: Duration, shutdown: Shutdown) -> Self {
+    pub(crate) fn new(timeout: Duration, shutdown: Shutdown) -> Self {
         Self {
             readiness: Vec::new(),
             liveness: Vec::new(),
@@ -114,20 +114,20 @@ impl HealthRouter {
 
     /// Registers a readiness check for `/readyz`.
     #[must_use]
-    pub fn readiness(mut self, check: HealthCheck) -> Self {
+    pub(crate) fn readiness(mut self, check: HealthCheck) -> Self {
         self.readiness.push(check);
         self
     }
 
     /// Registers a liveness check for `/livez`.
     #[must_use]
-    pub fn liveness(mut self, check: HealthCheck) -> Self {
+    pub(crate) fn liveness(mut self, check: HealthCheck) -> Self {
         self.liveness.push(check);
         self
     }
 
     /// Builds the axum router with both probe routes.
-    pub fn into_router(self) -> Router {
+    pub(crate) fn into_router(self) -> Router {
         let state = HealthState {
             readiness: self.readiness.into(),
             liveness: self.liveness.into(),
@@ -221,48 +221,34 @@ mod tests {
         time::Duration,
     };
 
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
-    };
-    use http_body_util::BodyExt;
-    use runtime::shutdown::Shutdown;
-    use serde_json::Value;
-    use tower::ServiceExt;
+    use axum::http::StatusCode;
 
     use super::{self as health};
-
-    fn get(uri: &str) -> Request<Body> {
-        Request::builder().uri(uri).body(Body::empty()).unwrap()
-    }
-
-    async fn body_json(body: Body) -> Value {
-        let bytes = body.collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&bytes).unwrap()
-    }
+    use crate::test_support;
+    use runtime::shutdown::Shutdown;
 
     #[tokio::test(start_paused = true)]
     async fn readyz_is_ok_when_every_check_passes() {
         let router = health::HealthRouter::new(Duration::from_secs(2), Shutdown::new())
-            .readiness(health::HealthCheck::new("up", || async {
+            .readiness(health::HealthCheck::with_resource("up", (), |()| async {
                 Ok::<(), String>(())
             }))
             .into_router();
-        let res = router.oneshot(get("/readyz")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
+        let res = test_support::get(router, "/readyz").await;
+        assert_eq!(res.status, StatusCode::OK);
     }
 
     #[tokio::test(start_paused = true)]
     async fn readyz_is_503_when_a_check_fails_but_livez_stays_ok() {
         let router = health::HealthRouter::new(Duration::from_secs(2), Shutdown::new())
-            .readiness(health::HealthCheck::new("down", || async {
+            .readiness(health::HealthCheck::with_resource("down", (), |()| async {
                 Err::<(), _>("boom")
             }))
             .into_router();
-        let res = router.clone().oneshot(get("/readyz")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let res = router.oneshot(get("/livez")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
+        let res = test_support::get(router.clone(), "/readyz").await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+        let res = test_support::get(router, "/livez").await;
+        assert_eq!(res.status, StatusCode::OK);
     }
 
     #[tokio::test(start_paused = true)]
@@ -271,9 +257,9 @@ mod tests {
         let router =
             health::HealthRouter::new(Duration::from_secs(2), shutdown.clone()).into_router();
         shutdown.trigger();
-        let res = router.oneshot(get("/readyz")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = body_json(res.into_body()).await;
+        let res = test_support::get(router, "/readyz").await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+        let body = res.body.expect("the readyz body is JSON");
         assert_eq!(body["status"], "shutting_down");
         assert_eq!(body["checks"], serde_json::json!({}));
     }
@@ -284,25 +270,28 @@ mod tests {
         let router =
             health::HealthRouter::new(Duration::from_secs(2), shutdown.clone()).into_router();
         shutdown.trigger();
-        let res = router.oneshot(get("/livez")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
+        let res = test_support::get(router, "/livez").await;
+        assert_eq!(res.status, StatusCode::OK);
     }
 
     #[tokio::test(start_paused = true)]
     async fn draining_skips_the_checks_entirely() {
         let ran = Arc::new(AtomicBool::default());
-        let ran_in_check = Arc::clone(&ran);
         let shutdown = Shutdown::new();
         let router = health::HealthRouter::new(Duration::from_secs(2), shutdown.clone())
-            .readiness(health::HealthCheck::new("down", move || {
-                ran_in_check.store(true, Ordering::Relaxed);
-                async { Err::<(), _>("boom") }
-            }))
+            .readiness(health::HealthCheck::with_resource(
+                "down",
+                Arc::clone(&ran),
+                |ran| async move {
+                    ran.store(true, Ordering::Relaxed);
+                    Err::<(), _>("boom")
+                },
+            ))
             .into_router();
         shutdown.trigger();
-        let res = router.oneshot(get("/readyz")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = body_json(res.into_body()).await;
+        let res = test_support::get(router, "/readyz").await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+        let body = res.body.expect("the readyz body is JSON");
         assert_eq!(body["status"], "shutting_down");
         assert!(!ran.load(Ordering::Relaxed));
     }
@@ -310,14 +299,14 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn readyz_reports_a_timed_out_check_as_failed() {
         let router = health::HealthRouter::new(Duration::from_secs(2), Shutdown::new())
-            .readiness(health::HealthCheck::new("slow", || async {
+            .readiness(health::HealthCheck::with_resource("slow", (), |()| async {
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 Ok::<(), String>(())
             }))
             .into_router();
-        let res = router.oneshot(get("/readyz")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = body_json(res.into_body()).await;
+        let res = test_support::get(router, "/readyz").await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+        let body = res.body.expect("the readyz body is JSON");
         assert_eq!(body["status"], "unavailable");
         assert_eq!(body["checks"]["slow"], "failed");
     }
@@ -326,9 +315,9 @@ mod tests {
     async fn livez_is_ok_with_no_checks() {
         let router =
             health::HealthRouter::new(Duration::from_secs(2), Shutdown::new()).into_router();
-        let res = router.oneshot(get("/livez")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = body_json(res.into_body()).await;
+        let res = test_support::get(router, "/livez").await;
+        assert_eq!(res.status, StatusCode::OK);
+        let body = res.body.expect("the livez body is JSON");
         assert_eq!(body["status"], "ok");
         assert_eq!(body["checks"], serde_json::json!({}));
     }
@@ -336,13 +325,13 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn livez_is_unavailable_when_a_liveness_check_fails() {
         let router = health::HealthRouter::new(Duration::from_secs(2), Shutdown::new())
-            .liveness(health::HealthCheck::new("down", || async {
+            .liveness(health::HealthCheck::with_resource("down", (), |()| async {
                 Err::<(), _>("boom")
             }))
             .into_router();
-        let res = router.oneshot(get("/livez")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = body_json(res.into_body()).await;
+        let res = test_support::get(router, "/livez").await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+        let body = res.body.expect("the livez body is JSON");
         assert_eq!(body["status"], "unavailable");
         assert_eq!(body["checks"]["down"], "failed");
     }
@@ -350,14 +339,14 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn livez_reports_a_timed_out_check_as_failed() {
         let router = health::HealthRouter::new(Duration::from_secs(2), Shutdown::new())
-            .liveness(health::HealthCheck::new("slow", || async {
+            .liveness(health::HealthCheck::with_resource("slow", (), |()| async {
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 Ok::<(), String>(())
             }))
             .into_router();
-        let res = router.oneshot(get("/livez")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body = body_json(res.into_body()).await;
+        let res = test_support::get(router, "/livez").await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+        let body = res.body.expect("the livez body is JSON");
         assert_eq!(body["status"], "unavailable");
         assert_eq!(body["checks"]["slow"], "failed");
     }
@@ -366,44 +355,44 @@ mod tests {
     async fn livez_stays_ok_while_shutting_down() {
         let shutdown = Shutdown::new();
         let router = health::HealthRouter::new(Duration::from_secs(2), shutdown.clone())
-            .liveness(health::HealthCheck::new("up", || async {
+            .liveness(health::HealthCheck::with_resource("up", (), |()| async {
                 Ok::<(), String>(())
             }))
             .into_router();
         shutdown.trigger();
-        let res = router.oneshot(get("/livez")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = body_json(res.into_body()).await;
+        let res = test_support::get(router, "/livez").await;
+        assert_eq!(res.status, StatusCode::OK);
+        let body = res.body.expect("the livez body is JSON");
         assert_eq!(body["status"], "ok");
     }
 
     #[tokio::test(start_paused = true)]
     async fn readiness_failures_do_not_affect_livez() {
         let router = health::HealthRouter::new(Duration::from_secs(2), Shutdown::new())
-            .readiness(health::HealthCheck::new("down", || async {
+            .readiness(health::HealthCheck::with_resource("down", (), |()| async {
                 Err::<(), _>("boom")
             }))
             .into_router();
-        let res = router.clone().oneshot(get("/readyz")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let res = router.oneshot(get("/livez")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = body_json(res.into_body()).await;
+        let res = test_support::get(router.clone(), "/readyz").await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+        let res = test_support::get(router, "/livez").await;
+        assert_eq!(res.status, StatusCode::OK);
+        let body = res.body.expect("the livez body is JSON");
         assert_eq!(body["status"], "ok");
     }
 
     #[tokio::test(start_paused = true)]
     async fn liveness_failures_do_not_affect_readyz() {
         let router = health::HealthRouter::new(Duration::from_secs(2), Shutdown::new())
-            .liveness(health::HealthCheck::new("down", || async {
+            .liveness(health::HealthCheck::with_resource("down", (), |()| async {
                 Err::<(), _>("boom")
             }))
             .into_router();
-        let res = router.clone().oneshot(get("/livez")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let res = router.oneshot(get("/readyz")).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-        let body = body_json(res.into_body()).await;
+        let res = test_support::get(router.clone(), "/livez").await;
+        assert_eq!(res.status, StatusCode::SERVICE_UNAVAILABLE);
+        let res = test_support::get(router, "/readyz").await;
+        assert_eq!(res.status, StatusCode::OK);
+        let body = res.body.expect("the readyz body is JSON");
         assert_eq!(body["status"], "ok");
     }
 }

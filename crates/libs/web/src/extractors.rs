@@ -54,9 +54,8 @@ fn raw_pointer(pointer: &str) -> String {
 /// (e.g. `/task`); see [`ValidationDetail`] in `api_error.rs` for the full
 /// location convention shared by all `Validated*` extractors.
 ///
-/// A body over the configured limit
-/// ([`crate::body_limit::with_body_limit`]) is rejected with `413` and the
-/// fixed message; all other rejections behave as before.
+/// A body over the configured limit (`with_body_limit`) is rejected with
+/// `413` and the fixed message; all other rejections behave as before.
 pub struct ValidatedJson<T>(pub T);
 
 impl<S, T> FromRequest<S> for ValidatedJson<T>
@@ -396,23 +395,16 @@ impl<C: HeaderConfig> OperationInput for OptionalHeader<C> {
 
 #[cfg(test)]
 mod tests {
-    use axum::{
-        Json, Router,
-        body::Body,
-        http::{Request, StatusCode, header},
-        response::IntoResponse,
-        routing::get,
-    };
-    use http_body_util::BodyExt;
+    use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::get};
     use jsonschema::Validator;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use serde_json_assert::assert_json_include;
-    use tower::ServiceExt;
     use uuid::Uuid;
 
     use super::{HasSchema, ValidatedPath, ValidatedQuery};
+    use crate::test_support;
 
     struct BoundedHeader;
 
@@ -484,24 +476,12 @@ mod tests {
             })
     }
 
-    async fn get_json_response_parts(uri: &str) -> (StatusCode, String, Value) {
-        let req = Request::builder().uri(uri).body(Body::empty()).unwrap();
-        let res = router().oneshot(req).await.unwrap();
-        let status = res.status();
-        let content_type = res
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .map_or_default(|v| v.to_str().unwrap().to_owned());
-        let body = res.into_body().collect().await.unwrap().to_bytes();
-        let data = serde_json::from_slice(&body).unwrap();
-        (status, content_type, data)
-    }
-
     #[tokio::test]
     async fn a_bad_path_parameter_is_a_422_with_details() {
-        let (status, content_type, data) = get_json_response_parts("/items/abc").await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(content_type, "application/json");
+        let parts = test_support::get(router(), "/items/abc").await;
+        assert_eq!(parts.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(parts.content_type, "application/json");
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "schema violation",
             "details": [{ "path": "{id}" }]
@@ -511,17 +491,19 @@ mod tests {
     #[tokio::test]
     async fn a_valid_path_parameter_is_extracted() {
         let id = Uuid::now_v7();
-        let (status, content_type, data) = get_json_response_parts(&format!("/items/{id}")).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(content_type, "application/json");
+        let parts = test_support::get(router(), &format!("/items/{id}")).await;
+        assert_eq!(parts.status, StatusCode::OK);
+        assert_eq!(parts.content_type, "application/json");
+        let data = parts.body.expect("the body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({ "id": id.to_string() }));
     }
 
     #[tokio::test]
     async fn a_bad_query_string_is_a_422_with_details() {
-        let (status, content_type, data) = get_json_response_parts("/list?limit=abc").await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(content_type, "application/json");
+        let parts = test_support::get(router(), "/list?limit=abc").await;
+        assert_eq!(parts.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(parts.content_type, "application/json");
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "schema violation",
             "details": [{ "path": "?limit=" }]
@@ -530,9 +512,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_query_violation_is_a_422_with_details() {
-        let (status, content_type, data) = get_json_response_parts("/list?limit=0").await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(content_type, "application/json");
+        let parts = test_support::get(router(), "/list?limit=0").await;
+        assert_eq!(parts.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(parts.content_type, "application/json");
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "schema violation",
             "details": [{ "path": "?limit=" }]
@@ -541,9 +524,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_repeated_scalar_is_a_422_with_details() {
-        let (status, content_type, data) = get_json_response_parts("/list?limit=1&limit=2").await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(content_type, "application/json");
+        let parts = test_support::get(router(), "/list?limit=1&limit=2").await;
+        assert_eq!(parts.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(parts.content_type, "application/json");
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "schema violation",
             "details": [{ "path": "?limit=" }]
@@ -552,10 +536,10 @@ mod tests {
 
     #[tokio::test]
     async fn too_many_query_params_is_a_422_with_details() {
-        let (status, content_type, data) =
-            get_json_response_parts("/list?limit=1&id=1&id=2&id=3").await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(content_type, "application/json");
+        let parts = test_support::get(router(), "/list?limit=1&id=1&id=2&id=3").await;
+        assert_eq!(parts.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(parts.content_type, "application/json");
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "schema violation",
             "details": [{ "path": "?id=" }]
@@ -564,10 +548,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_specific_invalid_query_param_is_a_422_with_details() {
-        let (status, content_type, data) =
-            get_json_response_parts("/list?limit=1&id=1&id=foo").await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(content_type, "application/json");
+        let parts = test_support::get(router(), "/list?limit=1&id=1&id=foo").await;
+        assert_eq!(parts.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(parts.content_type, "application/json");
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "schema violation",
             "details": [{ "path": "?id[1]=" }]
@@ -576,9 +560,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_query_is_a_422_with_details() {
-        let (status, content_type, data) = get_json_response_parts("/list").await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(content_type, "application/json");
+        let parts = test_support::get(router(), "/list").await;
+        assert_eq!(parts.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(parts.content_type, "application/json");
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "schema violation",
             "details": [{ "path": "?" }]
@@ -587,9 +572,10 @@ mod tests {
 
     #[tokio::test]
     async fn valid_query_parameter_passes_through() {
-        let (status, content_type, data) = get_json_response_parts("/list?limit=5").await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(content_type, "application/json");
+        let parts = test_support::get(router(), "/list?limit=5").await;
+        assert_eq!(parts.status, StatusCode::OK);
+        assert_eq!(parts.content_type, "application/json");
+        let data = parts.body.expect("the body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "id": null,
             "limit": 5,
@@ -600,39 +586,35 @@ mod tests {
         Router::new().route("/echo", get(echo_optional_header))
     }
 
-    async fn get_with_header(header: Option<(&str, &str)>) -> (StatusCode, Value) {
-        let mut req = Request::builder().uri("/echo");
-        if let Some((name, value)) = header {
-            req = req.header(name, value);
-        }
-        let res = optional_header_router()
-            .oneshot(req.body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        let status = res.status();
-        let data =
-            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-        (status, data)
-    }
-
     #[tokio::test]
     async fn an_absent_optional_header_extracts_to_none() {
-        let (status, data) = get_with_header(None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(data, Value::Null);
+        let parts = test_support::get(optional_header_router(), "/echo").await;
+        assert_eq!(parts.status, StatusCode::OK);
+        assert_eq!(parts.body, Some(Value::Null));
     }
 
     #[tokio::test]
     async fn a_valid_optional_header_is_extracted() {
-        let (status, data) = get_with_header(Some(("test-header", "abc!~"))).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(data, Value::String("abc!~".to_owned()));
+        let parts = test_support::get_with_headers(
+            optional_header_router(),
+            "/echo",
+            &[("test-header", "abc!~")],
+        )
+        .await;
+        assert_eq!(parts.status, StatusCode::OK);
+        assert_eq!(parts.body, Some(Value::String("abc!~".to_owned())));
     }
 
     #[tokio::test]
     async fn a_too_short_optional_header_is_a_400_with_the_rejection_message() {
-        let (status, data) = get_with_header(Some(("test-header", "a"))).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let parts = test_support::get_with_headers(
+            optional_header_router(),
+            "/echo",
+            &[("test-header", "a")],
+        )
+        .await;
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "invalid test header"
         }));
@@ -641,8 +623,14 @@ mod tests {
     #[tokio::test]
     async fn a_too_long_optional_header_is_a_400_with_the_rejection_message() {
         let too_long = "a".repeat(9);
-        let (status, data) = get_with_header(Some(("test-header", &too_long))).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let parts = test_support::get_with_headers(
+            optional_header_router(),
+            "/echo",
+            &[("test-header", too_long.as_str())],
+        )
+        .await;
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "invalid test header"
         }));
@@ -650,8 +638,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_non_visible_ascii_optional_header_is_a_400_with_the_rejection_message() {
-        let (status, data) = get_with_header(Some(("test-header", "a b"))).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let parts = test_support::get_with_headers(
+            optional_header_router(),
+            "/echo",
+            &[("test-header", "a b")],
+        )
+        .await;
+        assert_eq!(parts.status, StatusCode::BAD_REQUEST);
+        let data = parts.body.expect("the error body is JSON");
         assert_json_include!(actual: data, expected: serde_json::json!({
             "error": "invalid test header"
         }));

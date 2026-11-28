@@ -2,9 +2,8 @@
 
 Shared axum web plumbing for HTTP APIs: the standard cross-cutting layer
 stack ([`with_api_stack`](src/stack.rs)), the API process contract
-([`Api`](src/api.rs)) with its [`launch`](src/launch.rs) composition root,
-the `/livez` and `/readyz` probe router ([`HealthRouter`](src/health.rs)),
-the draining HTTP server ([`serve`](src/server.rs)), JSON-validated
+([`Api`](src/api.rs)), the shared process runner
+([`launch`](src/launch.rs) / [`launch_with`](src/launch.rs)), JSON-validated
 extractors, HTTP error bodies, and the CLI/env configuration for API
 binaries ([`ApiConfig`](src/config.rs)). The crate depends on `runtime`,
 `telemetry`, and the `opentelemetry` API crate, never on a domain or on
@@ -15,36 +14,38 @@ binaries ([`ApiConfig`](src/config.rs)). The crate depends on `runtime`,
 - [`Api` / `ApiParts` / `ApiContext`](src/api.rs) — the API process
   contract: `start(context)` connects backends, runs migrations, and builds
   the router, handing back an `ApiParts` — the router plus optional
-  readiness checks and shutdown hooks. The context carries the meter
-  provider for instrumentation (`context.meter_provider()`). An API has no
-  name of its own: the HTTP server task name is fixed.
+  readiness and liveness checks, supervised tasks, and shutdown hooks. The
+  context carries the meter provider for instrumentation
+  (`context.meter_provider()`) and the shutdown handle (`context.shutdown()`)
+  that `.task` tasks observe. An API has no name of its own: the HTTP server
+  task name is fixed.
 - [`launch`](src/launch.rs) — process composition root: initializes
   telemetry, runs `Api::start`, binds the listener, installs shutdown signal
-  handlers (a second signal exits 143 immediately), supervises the HTTP
-  server on a `runtime::supervisor::Supervisor` under the shutdown deadline,
-  runs the shutdown hooks, flushes telemetry, and returns the process exit
-  code.
+  handlers immediately before supervision (a second signal exits 143
+  immediately), supervises the HTTP server and the API's tasks on a
+  `runtime::supervisor::Supervisor` under the shutdown deadline, runs the
+  shutdown hooks, flushes telemetry, and returns the process exit code.
+  [`launch_with`](src/launch.rs) is the same runner taking an already
+  composed router, a pre-built `ApiParts`, and a [`Label`](src/launch.rs)
+  (`Api` or `Worker(&'static str)`) that names the log messages and the
+  server task; `worker::launch` is a thin client of it, so the API and
+  worker shapes share one supervision path.
 - [`with_api_stack`](src/stack.rs) — the standard layer stack, encoding the
   required order once. Layers, outermost first:
   `with_http_metrics` → `with_cors` → `with_http_tracing` →
   `with_guardrails`. Health probes must be merged after it so they bypass
   the stack.
-- The individual layer functions —
-  [`with_http_metrics`](src/metrics.rs), [`with_cors`](src/cors.rs),
-  [`with_http_tracing`](src/middleware.rs),
-  [`with_guardrails`](src/guardrails.rs),
-  [`with_json_fallbacks`](src/fallback.rs) — stay public escape hatches for
-  bespoke stacks.
-- [`HealthRouter`](src/health.rs) — the `/livez` and `/readyz` probe
-  router; the checks themselves are `runtime::health::HealthCheck` values
-  supplied by the app (e.g. `database::health::check(&pool)`).
-- [`serve`](src/server.rs) — the HTTP server future: after shutdown is
-  triggered it drains for `SHUTDOWN_DRAIN_SECONDS` (readiness already
-  reports `shutting_down`), stops accepting connections, and waits for
-  in-flight requests.
+- [`with_json_fallbacks`](src/fallback.rs) — replaces axum's empty 404 and
+  405 responses with the standard JSON error body, for APIs that build
+  fallback routes of their own.
+- [`ApiParts::probes`](src/api.rs) — the `/livez` and `/readyz` probe
+  router carrying the parts' liveness and readiness checks; the checks
+  themselves are `runtime::health::HealthCheck` values supplied by the app
+  (e.g. `database::health::check(&pool)`).
 - [`ApiConfig`](src/config.rs) — CLI/env configuration for an API binary;
-  it flattens `runtime::config::LifecycleConfig` and derives the guardrails
-  and CORS policy (`guardrails()`, `cors()`, `stack()`) the stack consumes.
+  it flattens `runtime::config::LifecycleConfig`, and its fields feed
+  [`with_api_stack`](src/stack.rs) directly (the request guardrails and
+  CORS policy are derived inside the crate).
 - [`AllowedOrigins`](src/cors.rs) — exact origins parsed from a
   comma-separated value at the configuration edge; the wildcard `*` is
   rejected, and empty input means CORS is off.
@@ -53,8 +54,8 @@ binaries ([`ApiConfig`](src/config.rs)). The crate depends on `runtime`,
 - [Error bodies](src/api_error.rs) — the `ErrorBody` envelope (with
   `requestId`), `ValidationErrorBody`, and the `ApiError` response wrapper.
 - [`test_support`](src/test_support.rs) — oneshot HTTP test helpers
-  (`get`, `post_json`, `put_json`, `post_body`), compiled only under the
-  `test-support` feature.
+  (`get`, `post_json`, `put_json`, `post_body`), compiled only for tests or
+  when the `test-support` feature is enabled.
 
 ## Probes
 
@@ -75,8 +76,8 @@ tracing, and guardrails.
 All of these come from [`ApiConfig`](src/config.rs), which the app's
 bin-private `Args` flattens. CLI flags (`--listen-address`,
 `--health-check-timeout-seconds`, `--cors-allowed-origins`,
-`--request-timeout-seconds`, `--request-body-limit-bytes`, and the
-`--shutdown-*` flags below) override env vars, which override these
+`--request-timeout-seconds`, `--request-body-limit-bytes`, and the shared
+`--shutdown-*` flags) override env vars, which override these
 defaults.
 
 | Env var | Default | Meaning |
@@ -86,14 +87,9 @@ defaults.
 | `CORS_ALLOWED_ORIGINS` | unset | Comma-separated exact origins allowed to make cross-origin requests; entries are trimmed and must not end with a slash; the wildcard `*` is not supported. Unset or empty means CORS is off. |
 | `REQUEST_TIMEOUT_SECONDS` | `30` | Seconds a request may take to produce a response before it is answered with `503 Service Unavailable`. |
 | `REQUEST_BODY_LIMIT_BYTES` | `1048576` | Maximum request body size in bytes; larger bodies are rejected with `413 Payload Too Large`. |
-| `SHUTDOWN_DRAIN_SECONDS` | `5` | Seconds to keep serving after the shutdown signal, with readiness reporting shutting down, before the server stops accepting connections. |
-| `SHUTDOWN_TIMEOUT_SECONDS` | `15` | Seconds after the drain that the HTTP server may take to finish before it is aborted; must be at least 1. |
-| `SHUTDOWN_FLUSH_TIMEOUT_SECONDS` | `5` | Seconds the final telemetry flush may take; must be at least 1. |
 
-The shutdown deadline (`SHUTDOWN_DRAIN_SECONDS +
-SHUTDOWN_TIMEOUT_SECONDS`) plus `SHUTDOWN_FLUSH_TIMEOUT_SECONDS` must fit
-inside the pod's `terminationGracePeriodSeconds`: the defaults give
-5 + 15 + 5 = 25 < 30.
+The shared `SHUTDOWN_*` vars and the shutdown budget are in the
+[runtime README](../runtime/README.md#configuration).
 
 ## Composing an API
 
@@ -176,25 +172,25 @@ where `src/config.rs` is the bin-private `Args` that flattens
 2. [`Api::start`](src/api.rs) — connect backends, run migrations, build the
    router. Failures return a classified `runtime::run_error::RunError`.
 3. Bind the listener from `LISTEN_ADDRESS`.
-4. Install shutdown signal handlers — only after `start` and the bind
-   succeed, so a `SIGTERM` during startup keeps its default disposition
-   (workers and jobs install theirs at startup instead).
-5. Supervise [`serve`](src/server.rs) on a
-   `runtime::supervisor::Supervisor` under the shutdown deadline, run the
-   shutdown hooks, and flush telemetry.
+4. Install shutdown signal handlers immediately before supervision. This is
+   the one signal rule for every process shape: a `SIGTERM` before
+   supervision — during `start`, binding, or any other startup — keeps its
+   default disposition.
+5. Supervise the HTTP server (`http_server`) and every `ApiParts::task` on
+   a `runtime::supervisor::Supervisor` under the shutdown deadline; a task
+   stopping first (error, panic, or a clean return before shutdown) becomes
+   the culprit. Then run the shutdown hooks and flush telemetry.
 
 ## Exit statuses
 
-| Exit code | Meaning |
-|---|---|
-| 0 | Success: the HTTP server stopped cleanly after a shutdown signal. |
-| 1 | Retryable: a startup failure classified retryable, bind or signal-install failure, HTTP server I/O error, panic; a Deployment restarts the pod. |
-| 2 | Permanent: a startup `RunError` classified as permanent (bad input, bad configuration). |
-| 143 | Interrupted: the run was cut short by a shutdown signal (128 + SIGTERM), the shutdown deadline passed with the server still running, or a second signal arrived. |
+Exit codes follow the [runtime taxonomy](../runtime/README.md#exit-codes).
+For an API, exit 1 also covers a startup failure classified retryable, a
+bind or signal-install failure, an HTTP server I/O error, or a panic (a
+Deployment restarts the pod). Exit 2 covers a startup `RunError` classified
+permanent.
 
 Every startup failure is logged with `tracing::error!` and ends through
-`runtime::lifecycle::finish`, so telemetry is flushed on every path. A
-telemetry flush failure is logged and never changes the exit status.
+`runtime::lifecycle::finish`, so telemetry is flushed on every path.
 
 ## Kubernetes
 

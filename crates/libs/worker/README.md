@@ -1,12 +1,11 @@
 # worker
 
 Composable runtime for long-running Kubernetes worker Deployments: the
-[`Worker`](src/worker.rs) contract, its [`WorkerConfig`](src/config.rs), the
-HTTP probe server ([`probes_router`](src/probes.rs)), joint supervision of the
-worker and the server ([`supervise`](src/supervisor.rs)), and the
-[`launch`](src/launch.rs) process composition root. One worker per binary; the
-crate depends on `runtime`, `web`, `telemetry`, and the `opentelemetry` API
-crate, never on a domain.
+[`Worker`](src/worker.rs) contract, its [`WorkerConfig`](src/config.rs), and
+the [`launch`](src/launch.rs) process composition root, which supervises the
+worker and its probe server through `web::launch_with`. One worker per
+binary; the crate depends on `runtime`, `web`, `telemetry`, and the
+`opentelemetry` API crate, never on a domain.
 
 ## Contents
 
@@ -18,19 +17,17 @@ crate, never on a domain.
 - [`WorkerConfig`](src/config.rs) — CLI/env configuration for the probe
   server, heartbeat, and process lifecycle (it flattens
   `runtime::config::LifecycleConfig`).
-- [`probes_router`](src/probes.rs) — `/livez` and `/readyz` backed by the
-  heartbeat and the shutdown handle.
-- [`supervise`](src/supervisor.rs) — runs the worker and the probe-server
-  future on a `runtime::supervisor::Supervisor`; the first task to stop
-  (error, panic, or a clean return before shutdown) triggers the shutdown and
-  becomes the culprit, and tasks still running at the shutdown deadline are
-  aborted.
-- [`launch`](src/launch.rs) — process composition root: initializes telemetry,
-  installs shutdown signal handlers (a second signal exits 143 immediately),
-  binds the listener, hands the worker the telemetry meter provider through
-  the context, supervises under the shutdown deadline, flushes
-  telemetry within `SHUTDOWN_FLUSH_TIMEOUT_SECONDS`, and returns the process
-  exit code.
+- [`launch`](src/launch.rs) — process composition root: initializes
+  telemetry, creates the process shutdown and heartbeat, hands the worker
+  the telemetry meter provider through the context, binds the probe
+  listener, installs shutdown signal handlers immediately before
+  supervision (a second signal exits 143 immediately), and supervises the
+  worker task (named after `Worker::name`) and the probe server through
+  [`web::launch_with`](../web/src/launch.rs) with the shutdown deadline;
+  the first task to stop (error, panic, or a clean return before shutdown)
+  triggers the shutdown and becomes the culprit, and tasks still running at
+  the deadline are aborted. Ends with a telemetry flush bounded by
+  `SHUTDOWN_FLUSH_TIMEOUT_SECONDS` and returns the process exit code.
 
 Every worker binary is a lib plus a thin bin: the worker value lives in the
 app's lib target, and `main.rs` only parses args, constructs the worker, and
@@ -53,39 +50,22 @@ lib target.
 | `HEALTH_LISTEN_ADDRESS` | `0.0.0.0:3000` | Address and port the probe server binds to. |
 | `HEALTH_CHECK_TIMEOUT_SECONDS` | `2` | Seconds each liveness or readiness check may take before it counts as failed. |
 | `HEARTBEAT_STALE_SECONDS` | `30` | Seconds without a heartbeat after which liveness fails; must be at least 1. |
-| `SHUTDOWN_DRAIN_SECONDS` | `5` | Seconds to keep serving after the shutdown signal, with readiness reporting shutting down, before the probe server stops accepting connections. |
-| `SHUTDOWN_TIMEOUT_SECONDS` | `15` | Seconds after the drain that the worker and probe server may take to stop before they are aborted; must be at least 1. |
-| `SHUTDOWN_FLUSH_TIMEOUT_SECONDS` | `5` | Seconds the final telemetry flush may take; must be at least 1. |
 
 CLI flags (`--health-listen-address`, `--health-check-timeout-seconds`,
-`--heartbeat-stale-seconds`, `--shutdown-drain-seconds`,
-`--shutdown-timeout-seconds`, `--shutdown-flush-timeout-seconds`) override env
-vars, which override these defaults.
+`--heartbeat-stale-seconds`) override env vars, which override these
+defaults.
 
-The shutdown deadline (`SHUTDOWN_DRAIN_SECONDS + SHUTDOWN_TIMEOUT_SECONDS`,
-measured from the moment shutdown is triggered — by a signal or by a failing
-task) plus `SHUTDOWN_FLUSH_TIMEOUT_SECONDS` must fit inside the pod's
-`terminationGracePeriodSeconds`: the defaults give 5 + 15 + 5 = 25 < 30. Work
-a task does during shutdown must fit inside `SHUTDOWN_TIMEOUT_SECONDS`.
-
-The default drain is non-zero because endpoint removal can race the
-`SIGTERM` that ends a rollout: a zero drain drops requests still arriving at
-the pod. During the drain the probe server keeps serving, with `/readyz`
-answering `503 shutting_down`, so the drain also delays worker exit by
-`SHUTDOWN_DRAIN_SECONDS`.
+The shared `SHUTDOWN_*` vars and the shutdown budget are in the
+[runtime README](../runtime/README.md#configuration). During the drain the
+probe server keeps serving with `/readyz` answering `503 shutting_down`, so
+the drain delays worker exit by `SHUTDOWN_DRAIN_SECONDS`.
 
 ## Exit statuses
 
-| Exit code | Meaning |
-|---|---|
-| 0 | Success: the worker stopped cleanly after a shutdown signal. |
-| 1 | Retryable: the worker or probe server returned before shutdown was requested, failed transiently, panicked, or startup (signals, bind) failed; counts toward `backoffLimit`. |
-| 2 | Permanent: a `RunError` classified as permanent (bad input, bad configuration). |
-| 143 | Interrupted: the run was cut short by a shutdown signal (128 + SIGTERM), the shutdown deadline passed with tasks still running, or a second signal arrived. |
-
-A telemetry flush failure is logged and never changes the exit status.
-Panics in the worker or the probe server are caught by the supervisor and
-exit 1.
+Exit codes follow the [runtime taxonomy](../runtime/README.md#exit-codes).
+For a worker, exit 1 also covers the worker or probe server returning before
+shutdown was requested, a panic in either, or a startup (bind, signal)
+failure; a Deployment restarts the pod.
 
 ## Composing a worker
 

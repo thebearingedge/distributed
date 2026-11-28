@@ -125,34 +125,12 @@ impl From<CursorError> for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use axum::{
-        Router,
-        body::Body,
-        http::{Request, StatusCode},
-        middleware,
-        response::Response,
-        routing::get,
-    };
-    use http_body_util::BodyExt;
+    use axum::{Router, http::StatusCode, middleware, routing::get};
     use serde_json::Value;
     use serde_json_assert::assert_json_include;
-    use tower::ServiceExt;
 
     use super::ApiError;
-    use crate::request_id;
-
-    fn request(method: &'static str, uri: &str, id: Option<&str>) -> Request<Body> {
-        let mut builder = Request::builder().method(method).uri(uri);
-        if let Some(id) = id {
-            builder = builder.header(&request_id::REQUEST_ID_HEADER, id);
-        }
-        builder.body(Body::empty()).unwrap()
-    }
-
-    async fn body_json(res: Response) -> Value {
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&bytes).unwrap()
-    }
+    use crate::{request_id, test_support};
 
     async fn message_error() -> ApiError {
         ApiError::message(StatusCode::NOT_FOUND, "route not found")
@@ -171,11 +149,13 @@ mod tests {
 
     #[tokio::test]
     async fn error_body_inside_scope_carries_request_id() {
-        let res = scoped_router()
-            .oneshot(request("GET", "/boom", Some("req-1")))
-            .await
-            .unwrap();
-        let body = body_json(res).await;
+        let res = test_support::get_with_headers(
+            scoped_router(),
+            "/boom",
+            &[(request_id::REQUEST_ID_HEADER.as_str(), "req-1")],
+        )
+        .await;
+        let body = res.body.expect("the error body is JSON");
         assert_json_include!(
             actual: body,
             expected: serde_json::json!({ "error": "route not found", "requestId": "req-1" })
@@ -185,11 +165,13 @@ mod tests {
     #[tokio::test]
     async fn error_body_outside_scope_has_no_request_id() {
         let router = Router::new().route("/boom", get(message_error));
-        let res = router
-            .oneshot(request("GET", "/boom", Some("req-1")))
-            .await
-            .unwrap();
-        let body = body_json(res).await;
+        let res = test_support::get_with_headers(
+            router,
+            "/boom",
+            &[(request_id::REQUEST_ID_HEADER.as_str(), "req-1")],
+        )
+        .await;
+        let body = res.body.expect("the error body is JSON");
         assert!(body.get("requestId").is_none());
         assert_json_include!(
             actual: body,
@@ -199,22 +181,20 @@ mod tests {
 
     #[tokio::test]
     async fn error_body_without_header_has_no_request_id() {
-        let res = scoped_router()
-            .oneshot(request("GET", "/boom", None))
-            .await
-            .unwrap();
-        let body = body_json(res).await;
+        let res = test_support::get(scoped_router(), "/boom").await;
+        let body = res.body.expect("the error body is JSON");
         assert!(body.get("requestId").is_none());
     }
 
     #[tokio::test]
     async fn non_object_body_is_not_mutated() {
-        let res = scoped_router()
-            .oneshot(request("GET", "/plain", Some("req-1")))
-            .await
-            .unwrap();
-        let body = body_json(res).await;
-        assert_eq!(body, Value::String("plain".to_owned()));
+        let res = test_support::get_with_headers(
+            scoped_router(),
+            "/plain",
+            &[(request_id::REQUEST_ID_HEADER.as_str(), "req-1")],
+        )
+        .await;
+        assert_eq!(res.body, Some(Value::String("plain".to_owned())));
     }
 
     #[test]

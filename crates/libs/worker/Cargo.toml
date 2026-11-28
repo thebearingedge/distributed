@@ -13,8 +13,6 @@ async-trait.workspace = true
 axum.workspace = true
 clap.workspace = true
 opentelemetry.workspace = true
-tokio.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 web = { workspace = true, features = ["test-support"] }

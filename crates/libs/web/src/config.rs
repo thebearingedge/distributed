@@ -7,10 +7,9 @@ use runtime::config::LifecycleConfig;
 
 use crate::cors::{AllowedOrigins, CorsConfig};
 use crate::guardrails::GuardrailsConfig;
-use crate::stack::StackConfig;
 
 /// Default for [`crate::config::ApiConfig::request_timeout_seconds`].
-pub const REQUEST_TIMEOUT_DEFAULT_SECONDS: u64 = 30;
+pub(crate) const REQUEST_TIMEOUT_DEFAULT_SECONDS: u64 = 30;
 /// Default for [`crate::config::ApiConfig::request_body_limit_bytes`] (1 MiB).
 pub const REQUEST_BODY_LIMIT_DEFAULT_BYTES: usize = 1_048_576;
 
@@ -58,49 +57,25 @@ impl ApiConfig {
         Duration::from_secs(self.health_check_timeout_seconds)
     }
 
-    /// Time a request may take to produce a response before it is answered
-    /// with `503 Service Unavailable`.
-    #[must_use]
-    pub fn request_timeout(&self) -> Duration {
-        Duration::from_secs(self.request_timeout_seconds)
-    }
-
-    /// Maximum request body size in bytes; larger bodies are rejected with
-    /// `413 Payload Too Large`.
-    #[must_use]
-    pub fn request_body_limit(&self) -> usize {
-        self.request_body_limit_bytes
-    }
-
     /// The request guardrails configured for this binary.
     #[must_use]
-    pub fn guardrails(&self) -> GuardrailsConfig {
+    pub(crate) fn guardrails(&self) -> GuardrailsConfig {
         GuardrailsConfig {
-            request_timeout: self.request_timeout(),
-            body_limit_bytes: self.request_body_limit(),
+            request_timeout: Duration::from_secs(self.request_timeout_seconds),
+            body_limit_bytes: self.request_body_limit_bytes,
         }
     }
 
     /// The CORS policy configured for this binary; unset origins mean CORS
     /// is off.
     #[must_use]
-    pub fn cors(&self) -> CorsConfig {
+    pub(crate) fn cors(&self) -> CorsConfig {
         CorsConfig {
-            allowed_origins: self
+            origins: self
                 .cors_allowed_origins
                 .as_ref()
                 .map_or_else(Vec::new, |origins| origins.as_slice().to_vec()),
             ..CorsConfig::default()
-        }
-    }
-
-    /// The standard API layer stack configuration for this binary: request
-    /// guardrails and CORS policy.
-    #[must_use]
-    pub fn stack(&self) -> StackConfig {
-        StackConfig {
-            guardrails: self.guardrails(),
-            cors: self.cors(),
         }
     }
 }
@@ -112,7 +87,6 @@ mod tests {
     use clap::Parser;
 
     use super::{ApiConfig, GuardrailsConfig};
-    use crate::cors::CorsConfig;
 
     #[test]
     fn defaults_apply_when_no_args_or_env() {
@@ -130,10 +104,7 @@ mod tests {
     #[test]
     fn cors_is_disabled_when_unset() {
         let config = ApiConfig::try_parse_from(["todos-api"]).unwrap();
-        assert_eq!(
-            config.cors().allowed_origins,
-            [] as [axum::http::HeaderValue; 0]
-        );
+        assert_eq!(config.cors().origins, [] as [axum::http::HeaderValue; 0]);
     }
 
     #[test]
@@ -146,7 +117,7 @@ mod tests {
         .unwrap();
         let cors = config.cors();
         let origins: Vec<_> = cors
-            .allowed_origins
+            .origins
             .iter()
             .map(|value| value.to_str().unwrap())
             .collect();
@@ -210,7 +181,7 @@ mod tests {
         assert_eq!(args.api.health_check_timeout_seconds, 4);
         let cors = args.api.cors();
         let cors_origins: Vec<_> = cors
-            .allowed_origins
+            .origins
             .iter()
             .map(|value| value.to_str().unwrap())
             .collect();
@@ -221,16 +192,10 @@ mod tests {
 
     #[test]
     fn accessors_convert_seconds_to_durations() {
-        let config = ApiConfig::try_parse_from([
-            "todos-api",
-            "--health-check-timeout-seconds",
-            "7",
-            "--request-timeout-seconds",
-            "11",
-        ])
-        .unwrap();
+        let config =
+            ApiConfig::try_parse_from(["todos-api", "--health-check-timeout-seconds", "7"])
+                .unwrap();
         assert_eq!(config.health_check_timeout(), Duration::from_secs(7));
-        assert_eq!(config.request_timeout(), Duration::from_secs(11));
     }
 
     #[test]
@@ -249,50 +214,21 @@ mod tests {
     }
 
     #[test]
-    fn request_body_limit_returns_the_configured_bytes() {
-        let config =
-            ApiConfig::try_parse_from(["todos-api", "--request-body-limit-bytes", "4096"]).unwrap();
-        assert_eq!(config.request_body_limit(), 4096);
-    }
-
-    #[test]
-    fn guardrails_defaults_match_the_guardrails_config_default() {
-        let config = ApiConfig::try_parse_from(["todos-api"]).unwrap();
-        assert_eq!(config.guardrails(), GuardrailsConfig::default());
-    }
-
-    #[test]
-    fn stack_combines_guardrails_and_cors() {
+    fn guardrails_read_the_request_flags() {
         let config = ApiConfig::try_parse_from([
             "todos-api",
-            "--cors-allowed-origins",
-            "http://a",
             "--request-timeout-seconds",
             "9",
             "--request-body-limit-bytes",
             "2048",
         ])
         .unwrap();
-
-        let stack = config.stack();
-
         assert_eq!(
-            stack.guardrails,
+            config.guardrails(),
             GuardrailsConfig {
                 request_timeout: Duration::from_secs(9),
                 body_limit_bytes: 2048,
             }
-        );
-        let origins: Vec<_> = stack
-            .cors
-            .allowed_origins
-            .iter()
-            .map(|value| value.to_str().unwrap())
-            .collect();
-        assert_eq!(origins, vec!["http://a"]);
-        assert_eq!(
-            stack.cors.allowed_methods,
-            CorsConfig::default().allowed_methods
         );
     }
 }

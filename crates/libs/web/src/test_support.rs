@@ -1,8 +1,9 @@
 //! Helpers for exercising axum routers in tests by sending one request at a
 //! time through `tower`'s oneshot service adapter.
 //!
-//! Compiled only when the crate's `test-support` feature is enabled; intended
-//! for unit and integration tests of HTTP layers built on axum.
+//! Compiled only for tests or when the crate's `test-support` feature is
+//! enabled; intended for unit and integration tests of HTTP layers built on
+//! axum.
 
 use axum::{
     Router,
@@ -42,20 +43,26 @@ impl ResponseParts {
 /// Collects the status, `Content-Type` header, and parsed JSON body from a
 /// response.
 ///
+/// A missing `Content-Type` header maps to `content_type: ""` and
+/// `body: None`, so responses that carry no content type — a `204 No
+/// Content`, a bare `200 OK` — are collectable too.
+///
 /// # Panics
 ///
-/// Panics when the response has no `Content-Type` header, the header is not
-/// UTF-8, or the response body cannot be collected.
+/// Panics when a `Content-Type` header is present but not UTF-8, or the
+/// response body cannot be collected.
 pub async fn get_response_parts(res: Response<Body>) -> ResponseParts {
     let headers = res.headers().clone();
     let status = res.status();
     let content_type = res
         .headers()
         .get(header::CONTENT_TYPE)
-        .expect("response should have a content-type header")
-        .to_str()
-        .expect("content-type header should be UTF-8")
-        .to_owned();
+        .map_or_default(|value| {
+            value
+                .to_str()
+                .expect("content-type header should be UTF-8")
+                .to_owned()
+        });
     let bytes = res
         .into_body()
         .collect()
@@ -71,6 +78,22 @@ pub async fn get_response_parts(res: Response<Body>) -> ResponseParts {
     }
 }
 
+/// Sends a built `request` through `router` and collects the interesting
+/// parts of the response.
+///
+/// # Panics
+///
+/// Panics when the router fails to handle the request.
+async fn send(router: Router, request: Request<Body>) -> ResponseParts {
+    get_response_parts(
+        router
+            .oneshot(request)
+            .await
+            .expect("request should be handled"),
+    )
+    .await
+}
+
 /// Sends a `GET` request and collects the interesting parts of the response.
 ///
 /// # Panics
@@ -81,13 +104,7 @@ pub async fn get(router: Router, uri: &str) -> ResponseParts {
         .uri(uri)
         .body(Body::empty())
         .expect("GET request should be buildable");
-    get_response_parts(
-        router
-            .oneshot(request)
-            .await
-            .expect("GET request should be handled"),
-    )
-    .await
+    send(router, request).await
 }
 
 /// Sends a `GET` request with extra request headers and collects the
@@ -109,13 +126,7 @@ pub async fn get_with_headers(
     let request = builder
         .body(Body::empty())
         .expect("GET request should be buildable");
-    get_response_parts(
-        router
-            .oneshot(request)
-            .await
-            .expect("GET request should be handled"),
-    )
-    .await
+    send(router, request).await
 }
 
 /// Sends a `POST` request with a JSON-encoded `body` and the
@@ -165,13 +176,7 @@ pub async fn put_json(router: Router, uri: &str, body: &impl Serialize) -> Respo
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(bytes))
         .expect("PUT request should be buildable");
-    get_response_parts(
-        router
-            .oneshot(request)
-            .await
-            .expect("PUT request should be handled"),
-    )
-    .await
+    send(router, request).await
 }
 
 /// Sends a `POST` request with a raw `body`, optionally setting the
@@ -209,21 +214,14 @@ async fn post_body_with_headers(
     let request = builder
         .body(body)
         .expect("POST request should be buildable");
-    get_response_parts(
-        router
-            .oneshot(request)
-            .await
-            .expect("POST request should be handled"),
-    )
-    .await
+    send(router, request).await
 }
 
 /// Sends a `DELETE` request and collects the interesting parts of the
 /// response.
 ///
-/// Unlike [`get_response_parts`], this tolerates a missing `Content-Type`
-/// header: a `204 No Content` response carries none. A missing header maps
-/// to `content_type: ""` and `body: None`.
+/// A `204 No Content` response carries no `Content-Type` header; a missing
+/// header maps to `content_type: ""` and `body: None`.
 ///
 /// # Panics
 ///
@@ -235,35 +233,7 @@ pub async fn delete(router: Router, uri: &str) -> ResponseParts {
         .uri(uri)
         .body(Body::empty())
         .expect("DELETE request should be buildable");
-    let response = router
-        .oneshot(request)
-        .await
-        .expect("DELETE request should be handled");
-
-    let headers = response.headers().clone();
-    let status = response.status();
-    let content_type = response
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .map_or_default(|value| {
-            value
-                .to_str()
-                .expect("content-type header should be UTF-8")
-                .to_owned()
-        });
-    let bytes = response
-        .into_body()
-        .collect()
-        .await
-        .expect("response body should be collectable")
-        .to_bytes();
-    let body = serde_json::from_slice(&bytes).ok();
-    ResponseParts {
-        status,
-        content_type,
-        body,
-        headers,
-    }
+    send(router, request).await
 }
 
 /// Extracts the `next`-page cursor from a list response, if it has one.
@@ -330,6 +300,15 @@ mod tests {
         assert!(parts.content_type.starts_with("text/plain"));
         assert_eq!(parts.body, None);
         assert_eq!(next_cursor(&parts), None);
+    }
+
+    #[tokio::test]
+    async fn get_tolerates_a_missing_content_type() {
+        let router: Router = Router::new().route("/empty", get_route(|| async { StatusCode::OK }));
+        let parts = get(router, "/empty").await;
+        assert_eq!(parts.status, StatusCode::OK);
+        assert_eq!(parts.content_type, "");
+        assert_eq!(parts.body, None);
     }
 
     #[tokio::test]
